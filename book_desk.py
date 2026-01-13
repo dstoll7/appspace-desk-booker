@@ -226,13 +226,15 @@ def create_reservation(tokens):
             print(f"   Status: {status}")
             return True
         elif response.status_code == 409:
-            print(f"\n⚠️  CONFLICT: Desk may already be booked")
+            print(f"\n⚠️  CONFLICT: Desk already booked for this time slot")
             try:
                 error_data = response.json()
-                print(f"   Details: {json.dumps(error_data, indent=2)}")
+                print(f"   Details: {error_data.get('message', 'No details')}")
             except:
                 print(f"   Response: {response.text}")
-            return False
+            # Return True (success) since desk is booked - just not by this run
+            print(f"\n✅ Desk {DESK_NAME} is already reserved (possibly by you earlier)")
+            return True
         elif response.status_code == 401:
             print(f"\n❌ UNAUTHORIZED: Token may have expired")
             print("   Please update APPSPACE_SESSION_TOKEN in GitHub Secrets")
@@ -299,8 +301,17 @@ def check_existing_reservations(tokens):
             items = data.get("items", [])
             
             for item in items:
+                # Check resources at top level
                 resources = item.get("resources", [])
                 for resource in resources:
+                    if resource.get("id") == DESK_RESOURCE_ID:
+                        print(f"⚠️  Already have a reservation for {DESK_NAME} on {booking_date}")
+                        return True
+                
+                # Also check nested reservation.resources (API returns both formats)
+                reservation = item.get("reservation", {})
+                res_resources = reservation.get("resources", [])
+                for resource in res_resources:
                     if resource.get("id") == DESK_RESOURCE_ID:
                         print(f"⚠️  Already have a reservation for {DESK_NAME} on {booking_date}")
                         return True
