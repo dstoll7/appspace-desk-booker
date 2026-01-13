@@ -3,11 +3,12 @@ name: Check In to Desk
 on:
   # Run at 9:15 AM Eastern Time, Monday-Friday
   # (15 minutes before 9:30 AM start time - check-in window opens)
-  # EST (Nov-Mar): 14:15 UTC = 9:15 AM ET
-  # EDT (Mar-Nov): 13:15 UTC = 9:15 AM ET
-  # We use 14:15 UTC which is 9:15 AM EST or 10:15 AM EDT
+  # Two entries to handle DST:
+  #   EST (Nov-Mar): 9:15 AM ET = 14:15 UTC
+  #   EDT (Mar-Nov): 9:15 AM ET = 13:15 UTC
   schedule:
-    - cron: '15 14 * * 1-5'  # Mon-Fri at 14:15 UTC (9:15 AM EST)
+    - cron: '15 14 * * 1-5'  # 9:15 AM EST (Nov-Mar)
+    - cron: '15 13 * * 1-5'  # 9:15 AM EDT (Mar-Nov)
   
   # Allow manual trigger from GitHub UI
   workflow_dispatch:
