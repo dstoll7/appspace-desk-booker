@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+.Python
+venv/
+ENV/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Local tokens (don't commit!)
+tokens.json
+*.token
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
