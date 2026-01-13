@@ -311,6 +311,143 @@ def check_existing_reservations(tokens):
 
 
 # =============================================================================
+# CHECK-IN FUNCTIONS
+# =============================================================================
+
+def get_todays_events(tokens):
+    """Get today's reservations to find the event ID for check-in."""
+    eastern = ZoneInfo(TIMEZONE)
+    utc = ZoneInfo("UTC")
+    
+    today = datetime.now(eastern).date()
+    
+    # Create date range for today
+    start_of_day = datetime(
+        today.year, today.month, today.day,
+        0, 0, 0, tzinfo=eastern
+    ).astimezone(utc)
+    
+    end_of_day = datetime(
+        today.year, today.month, today.day,
+        23, 59, 59, tzinfo=eastern
+    ).astimezone(utc)
+    
+    headers = {
+        "Accept": "application/json, text/plain, */*",
+        "token": tokens["session_token"],
+        "x-appspace-request-timezone": TIMEZONE,
+    }
+    
+    params = {
+        "sort": "startAt",
+        "status": "NotConfirmed, Pending, Checkin, Active, Conflict",
+        "includesourceobject": "true",
+        "startAt": start_of_day.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "endAt": end_of_day.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
+        "page": 1,
+        "start": 0,
+        "limit": 20,
+        "pagecount": 20,
+    }
+    
+    try:
+        response = requests.get(
+            f"{BASE_URL}/reservation/users/me/events",
+            headers=headers,
+            params=params,
+            timeout=30,
+        )
+        
+        if response.status_code == 200:
+            data = response.json()
+            return data.get("items", [])
+    except Exception as e:
+        print(f"⚠ Could not get today's events: {e}")
+    
+    return []
+
+
+def checkin_reservation(tokens):
+    """Check in to today's desk reservation."""
+    eastern = ZoneInfo(TIMEZONE)
+    
+    print("\n🔍 Looking for today's reservation to check in...")
+    
+    events = get_todays_events(tokens)
+    
+    if not events:
+        print("   No reservations found for today")
+        return False
+    
+    # Find the reservation for our desk
+    target_event = None
+    for event in events:
+        resources = event.get("resources", [])
+        for resource in resources:
+            if resource.get("id") == DESK_RESOURCE_ID:
+                target_event = event
+                break
+        if target_event:
+            break
+    
+    if not target_event:
+        print(f"   No reservation found for desk {DESK_NAME}")
+        return False
+    
+    event_id = target_event.get("id")
+    event_status = target_event.get("eventStatus", "Unknown")
+    start_at = target_event.get("startAt", "")
+    
+    print(f"\n📋 Found reservation:")
+    print(f"   Event ID: {event_id}")
+    print(f"   Status: {event_status}")
+    print(f"   Start: {start_at}")
+    
+    # Check if already checked in
+    if event_status == "Active":
+        print("\n✅ Already checked in!")
+        return True
+    
+    # Check if in check-in window (status should be "Checkin" or "Pending")
+    if event_status not in ["Checkin", "Pending"]:
+        print(f"\n⚠️  Cannot check in - status is {event_status}")
+        print("   Check-in window is 15 min before to 15 min after start time")
+        return False
+    
+    # Perform check-in
+    headers = {
+        "Content-Type": "application/json;charset=UTF-8",
+        "Accept": "application/json, text/plain, */*",
+        "token": tokens["session_token"],
+        "x-appspace-request-timezone": TIMEZONE,
+    }
+    
+    payload = {
+        "resourceIds": [DESK_RESOURCE_ID]
+    }
+    
+    try:
+        response = requests.post(
+            f"{BASE_URL}/reservation/events/{event_id}/checkin",
+            headers=headers,
+            json=payload,
+            timeout=30,
+        )
+        
+        if response.status_code == 202:
+            print(f"\n✅ CHECK-IN SUCCESSFUL!")
+            print(f"   Desk {DESK_NAME} confirmed for today")
+            return True
+        else:
+            print(f"\n❌ Check-in failed: {response.status_code}")
+            print(response.text)
+            return False
+    except Exception as e:
+        print(f"\n❌ Check-in request failed: {e}")
+        return False
+
+
+# =============================================================================
 # MAIN
 # =============================================================================
 
@@ -318,8 +455,14 @@ def main():
     """Main entry point."""
     eastern = ZoneInfo(TIMEZONE)
     
+    # Check for --checkin flag
+    do_checkin = "--checkin" in sys.argv
+    
     print("=" * 60)
-    print("🏢 Appspace Desk Auto-Booker (GitHub Actions)")
+    if do_checkin:
+        print("🏢 Appspace Desk Check-In (GitHub Actions)")
+    else:
+        print("🏢 Appspace Desk Auto-Booker (GitHub Actions)")
     print(f"   {datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print("=" * 60)
     
@@ -330,22 +473,32 @@ def main():
     # Try to refresh token
     tokens = try_refresh_token(tokens)
     
-    # Check for existing reservation
-    print("\n🔍 Checking for existing reservations...")
-    if check_existing_reservations(tokens):
-        print("   Skipping - reservation already exists")
-        return
-    
-    print("   No existing reservation found")
-    
-    # Create the reservation
-    success = create_reservation(tokens)
-    
-    if success:
-        print(f"\n🎉 Done!")
+    if do_checkin:
+        # Check-in mode
+        success = checkin_reservation(tokens)
+        if success:
+            print(f"\n🎉 Checked in successfully!")
+        else:
+            print(f"\n😞 Check-in failed")
+            sys.exit(1)
     else:
-        print(f"\n😞 Failed to book desk {DESK_NAME}")
-        sys.exit(1)
+        # Booking mode
+        # Check for existing reservation
+        print("\n🔍 Checking for existing reservations...")
+        if check_existing_reservations(tokens):
+            print("   Skipping - reservation already exists")
+            return
+        
+        print("   No existing reservation found")
+        
+        # Create the reservation
+        success = create_reservation(tokens)
+        
+        if success:
+            print(f"\n🎉 Done!")
+        else:
+            print(f"\n😞 Failed to book desk {DESK_NAME}")
+            sys.exit(1)
 
 
 if __name__ == "__main__":

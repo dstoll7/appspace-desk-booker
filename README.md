@@ -8,8 +8,14 @@ Automatically books desk **08W-125-G** at 7 Hudson, 7 days in advance using GitH
 |---------|-------|
 | Desk | 08W-125-G (8th floor, 7 Hudson) |
 | Time | 9:30 AM - 5:30 PM Eastern |
-| Schedule | Daily at 12:01 AM ET (Mon-Fri) |
 | Booking Window | 7 days in advance |
+
+## Automated Schedules
+
+| Workflow | Schedule | Purpose |
+|----------|----------|---------|
+| **Book Desk Daily** | 12:01 AM ET (Mon-Fri) | Books desk 7 days in advance |
+| **Check In to Desk** | 9:15 AM ET (Mon-Fri) | Auto check-in (15 min before start) |
 
 ## Setup
 
