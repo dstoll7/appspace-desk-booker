@@ -349,16 +349,13 @@ def get_todays_events(tokens):
         "x-appspace-request-timezone": TIMEZONE,
     }
     
+    # Don't filter by status - we want to find all reservations and check their status
     params = {
         "sort": "startAt",
-        "status": "NotConfirmed, Pending, Checkin, Active, Conflict",
         "includesourceobject": "true",
         "startAt": start_of_day.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
         "endAt": end_of_day.strftime("%Y-%m-%dT%H:%M:%S.000Z"),
-        "page": 1,
-        "start": 0,
         "limit": 20,
-        "pagecount": 20,
     }
     
     try:
@@ -391,9 +388,11 @@ def checkin_reservation(tokens):
         return False
     
     # Find the reservation for our desk
+    # API returns resources nested under event["reservation"]["resources"]
     target_event = None
     for event in events:
-        resources = event.get("resources", [])
+        reservation = event.get("reservation", {})
+        resources = reservation.get("resources", [])
         for resource in resources:
             if resource.get("id") == DESK_RESOURCE_ID:
                 target_event = event
@@ -406,8 +405,9 @@ def checkin_reservation(tokens):
         return False
     
     event_id = target_event.get("id")
-    event_status = target_event.get("eventStatus", "Unknown")
-    start_at = target_event.get("startAt", "")
+    reservation = target_event.get("reservation", {})
+    event_status = reservation.get("status", "Unknown")
+    start_at = target_event.get("startAt", "") or reservation.get("effectiveStartAt", "")
     
     print(f"\n📋 Found reservation:")
     print(f"   Event ID: {event_id}")
@@ -419,11 +419,38 @@ def checkin_reservation(tokens):
         print("\n✅ Already checked in!")
         return True
     
-    # Check if in check-in window (status should be "Checkin" or "Pending")
-    if event_status not in ["Checkin", "Pending"]:
+    # Parse start time and check if we're in the check-in window
+    # Window is 15 minutes before to 15 minutes after start time
+    if start_at:
+        try:
+            start_dt = datetime.fromisoformat(start_at.replace("Z", "+00:00")).astimezone(eastern)
+            now = datetime.now(eastern)
+            window_start = start_dt - timedelta(minutes=15)
+            window_end = start_dt + timedelta(minutes=15)
+            
+            print(f"   Check-in window: {window_start.strftime('%I:%M %p')} - {window_end.strftime('%I:%M %p ET')}")
+            print(f"   Current time: {now.strftime('%I:%M %p ET')}")
+            
+            if now < window_start:
+                minutes_until = int((window_start - now).total_seconds() / 60)
+                print(f"\n⏳ Check-in window opens in {minutes_until} minutes")
+                print("   Exiting - will retry at the correct time")
+                # Return True to avoid workflow failure - this is expected behavior
+                return True
+            elif now > window_end:
+                print(f"\n⚠️  Check-in window closed {int((now - window_end).total_seconds() / 60)} minutes ago")
+                print("   Will attempt check-in anyway...")
+        except Exception as e:
+            print(f"   ⚠️  Could not parse start time: {e}")
+    
+    # Valid statuses for check-in attempt
+    valid_statuses = ["Confirmed", "Checkin", "Pending", "NotConfirmed"]
+    if event_status not in valid_statuses:
         print(f"\n⚠️  Cannot check in - status is {event_status}")
-        print("   Check-in window is 15 min before to 15 min after start time")
+        print(f"   Expected one of: {valid_statuses}")
         return False
+    
+    print(f"\n🔄 Attempting check-in (status: {event_status})...")
     
     # Perform check-in
     headers = {
