@@ -232,9 +232,17 @@ def create_reservation(tokens):
                 print(f"   Details: {error_data.get('message', 'No details')}")
             except:
                 print(f"   Response: {response.text}")
-            # Return True (success) since desk is booked - just not by this run
-            print(f"\n✅ Desk {DESK_NAME} is already reserved (possibly by you earlier)")
-            return True
+            
+            # IMPORTANT: 409 doesn't mean YOU have the desk - someone else might!
+            # Verify by checking our actual reservations
+            print(f"\n🔍 Verifying if YOU have the reservation...")
+            if check_existing_reservations(tokens):
+                print(f"✅ Confirmed: You already have {DESK_NAME} reserved")
+                return True
+            else:
+                print(f"❌ FAILED: {DESK_NAME} was booked by someone else!")
+                print(f"   Consider running the booking earlier (before midnight)")
+                return False
         elif response.status_code == 401:
             print(f"\n❌ UNAUTHORIZED: Token may have expired")
             print("   Please update APPSPACE_SESSION_TOKEN in GitHub Secrets")
@@ -420,13 +428,13 @@ def checkin_reservation(tokens):
         return True
     
     # Parse start time and check if we're in the check-in window
-    # Window is 15 minutes before to 15 minutes after start time
+    # Window is 30 minutes before to 30 minutes after start time (wider for reliability)
     if start_at:
         try:
             start_dt = datetime.fromisoformat(start_at.replace("Z", "+00:00")).astimezone(eastern)
             now = datetime.now(eastern)
-            window_start = start_dt - timedelta(minutes=15)
-            window_end = start_dt + timedelta(minutes=15)
+            window_start = start_dt - timedelta(minutes=30)
+            window_end = start_dt + timedelta(minutes=30)
             
             print(f"   Check-in window: {window_start.strftime('%I:%M %p')} - {window_end.strftime('%I:%M %p ET')}")
             print(f"   Current time: {now.strftime('%I:%M %p ET')}")
@@ -434,9 +442,9 @@ def checkin_reservation(tokens):
             if now < window_start:
                 minutes_until = int((window_start - now).total_seconds() / 60)
                 print(f"\n⏳ Check-in window opens in {minutes_until} minutes")
-                print("   Exiting - will retry at the correct time")
-                # Return True to avoid workflow failure - this is expected behavior
-                return True
+                print("   Too early - check-in NOT performed")
+                # Return "early" to indicate skipped (not a failure, but not success either)
+                return "early"
             elif now > window_end:
                 print(f"\n⚠️  Check-in window closed {int((now - window_end).total_seconds() / 60)} minutes ago")
                 print("   Will attempt check-in anyway...")
@@ -513,8 +521,12 @@ def main():
     
     if do_checkin:
         # Check-in mode
-        success = checkin_reservation(tokens)
-        if success:
+        result = checkin_reservation(tokens)
+        if result == "early":
+            print(f"\n⏰ Too early for check-in window - try again later")
+            # Exit with error so workflow shows as failed and we know to investigate
+            sys.exit(1)
+        elif result:
             print(f"\n🎉 Checked in successfully!")
         else:
             print(f"\n😞 Check-in failed")

@@ -14,8 +14,8 @@ Automatically books desk **08W-125-G** at 7 Hudson, 7 days in advance using GitH
 
 | Workflow | Schedule | Purpose |
 |----------|----------|---------|
-| **Book Desk Daily** | 12:01 AM ET (Mon-Fri) | Books desk 7 days in advance |
-| **Check In to Desk** | 9:15 AM ET (Mon-Fri) | Auto check-in (15 min before start) |
+| **Book Desk Daily** | 11:00 PM ET (Sun-Thu) | Books desk 7 days in advance (runs night before to beat other bookers) |
+| **Check In to Desk** | 9:20 AM ET (Mon-Fri) | Auto check-in (within 9:00-10:00 AM window) |
 
 ## Setup
 
@@ -51,12 +51,13 @@ You can trigger the workflow manually:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  GitHub Actions (runs at 12:01 AM ET, Mon-Fri)              │
+│  GitHub Actions (runs at 11:00 PM ET, Sun-Thu)              │
 ├─────────────────────────────────────────────────────────────┤
-│  1. Check if desk already booked for target date            │
+│  1. Check if YOU already have desk booked for target date   │
 │  2. Lock the desk resource                                  │
 │  3. Create reservation 7 days out                           │
-│  4. Log results                                             │
+│  4. On 409 conflict, VERIFY you have the desk (fail if not) │
+│  5. Log results                                             │
 └─────────────────────────────────────────────────────────────┘
 ```
 
@@ -68,7 +69,14 @@ You can trigger the workflow manually:
 3. Update `APPSPACE_SESSION_TOKEN` in GitHub Secrets
 
 ### Desk Already Booked (409 Conflict)
-Someone else booked the desk first, or you already have a reservation.
+The script will verify if YOU have the reservation:
+- If you have it: Success ✅
+- If someone else has it: Failure ❌ (consider running earlier)
+
+### Check-In Failed / Too Early
+- Workflow now runs at 9:20 AM ET directly (no longer relies on queue delays)
+- Check-in window is 9:00 AM - 10:00 AM ET (30 min buffer on each side)
+- If check-in fails with "too early", the cron timing may have drifted
 
 ### Workflow Not Running
 - Check that Actions are enabled for the repository
