@@ -28,6 +28,11 @@ on:
         required: false
         default: ''
         type: string
+      force:
+        description: 'Force booking (skip existing reservation check)'
+        required: false
+        default: 'false'
+        type: boolean
       dry_run:
         description: 'Dry run (check only, no booking)'
         required: false
@@ -63,6 +68,9 @@ jobs:
           fi
           if [ -n "${{ inputs.end_time }}" ]; then
             ARGS="$ARGS --end-time ${{ inputs.end_time }}"
+          fi
+          if [ "${{ inputs.force }}" = "true" ]; then
+            ARGS="$ARGS --force"
           fi
           python book_desk.py $ARGS
       

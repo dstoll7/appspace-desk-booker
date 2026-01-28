@@ -75,6 +75,11 @@ def get_days_ahead():
                 pass
     return DAYS_AHEAD
 
+
+def should_force():
+    """Check if --force flag is set to skip existing reservation check."""
+    return "--force" in sys.argv
+
 # =============================================================================
 # TOKEN MANAGEMENT
 # =============================================================================
@@ -577,13 +582,16 @@ def main():
             sys.exit(1)
     else:
         # Booking mode
-        # Check for existing reservation
-        print("\n🔍 Checking for existing reservations...")
-        if check_existing_reservations(tokens):
-            print("   Skipping - reservation already exists")
-            return
-        
-        print("   No existing reservation found")
+        # Check for existing reservation (unless --force is set)
+        if should_force():
+            print("\n⚡ Force mode - skipping existing reservation check")
+        else:
+            print("\n🔍 Checking for existing reservations...")
+            if check_existing_reservations(tokens):
+                print("   Skipping - reservation already exists")
+                print("   Use --force to attempt booking anyway")
+                return
+            print("   No existing reservation found")
         
         # Create the reservation
         success = create_reservation(tokens)
