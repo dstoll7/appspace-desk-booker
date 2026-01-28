@@ -31,11 +31,35 @@ USER_EMAIL = "Daniel.Stoll@disney.com"
 DESK_RESOURCE_ID = "3a1b388a-08ec-4e16-acde-cebd64ebc86d"
 DESK_NAME = "08W-125-G"
 
-# Booking time (local Eastern time)
-START_HOUR = 9
-START_MINUTE = 30
-END_HOUR = 17
-END_MINUTE = 30
+# Booking time (local Eastern time) - defaults, can be overridden with --start-time and --end-time
+DEFAULT_START_HOUR = 9
+DEFAULT_START_MINUTE = 30
+DEFAULT_END_HOUR = 17
+DEFAULT_END_MINUTE = 30
+
+
+def get_booking_times():
+    """Get booking times from command line or use defaults."""
+    start_hour, start_minute = DEFAULT_START_HOUR, DEFAULT_START_MINUTE
+    end_hour, end_minute = DEFAULT_END_HOUR, DEFAULT_END_MINUTE
+    
+    for i, arg in enumerate(sys.argv):
+        if arg == "--start-time" and i + 1 < len(sys.argv):
+            try:
+                parts = sys.argv[i + 1].split(":")
+                start_hour = int(parts[0])
+                start_minute = int(parts[1]) if len(parts) > 1 else 0
+            except (ValueError, IndexError):
+                pass
+        elif arg == "--end-time" and i + 1 < len(sys.argv):
+            try:
+                parts = sys.argv[i + 1].split(":")
+                end_hour = int(parts[0])
+                end_minute = int(parts[1]) if len(parts) > 1 else 0
+            except (ValueError, IndexError):
+                pass
+    
+    return start_hour, start_minute, end_hour, end_minute
 
 # Days in advance to book (default, can be overridden with --days-ahead N)
 DAYS_AHEAD = 7
@@ -131,7 +155,7 @@ def is_weekday(date):
 
 
 def create_reservation(tokens):
-    """Create a desk reservation for 7 days from now."""
+    """Create a desk reservation for N days from now."""
     eastern = ZoneInfo(TIMEZONE)
     utc = ZoneInfo("UTC")
     
@@ -143,15 +167,18 @@ def create_reservation(tokens):
         print(f"⏭️  Skipping {booking_date.strftime('%A')} - not a weekday")
         return True  # Return True so we don't fail the workflow
     
+    # Get booking times (may be overridden via command line)
+    start_hour, start_minute, end_hour, end_minute = get_booking_times()
+    
     # Create start and end times in Eastern, then convert to UTC
     start_local = datetime(
         booking_date.year, booking_date.month, booking_date.day,
-        START_HOUR, START_MINUTE, 0,
+        start_hour, start_minute, 0,
         tzinfo=eastern
     )
     end_local = datetime(
         booking_date.year, booking_date.month, booking_date.day,
-        END_HOUR, END_MINUTE, 0,
+        end_hour, end_minute, 0,
         tzinfo=eastern
     )
     
@@ -163,8 +190,12 @@ def create_reservation(tokens):
     start_str = start_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     end_str = end_utc.strftime("%Y-%m-%dT%H:%M:%S.000Z")
     
+    # Format display time
+    start_display = start_local.strftime("%I:%M %p").lstrip("0")
+    end_display = end_local.strftime("%I:%M %p").lstrip("0")
+    
     print(f"\n📅 Booking desk {DESK_NAME} for {booking_date.strftime('%A, %B %d, %Y')}")
-    print(f"   Time: {START_HOUR}:{START_MINUTE:02d} AM - {END_HOUR - 12}:{END_MINUTE:02d} PM ET")
+    print(f"   Time: {start_display} - {end_display} ET")
     print(f"   UTC: {start_str} - {end_str}")
     
     headers = {

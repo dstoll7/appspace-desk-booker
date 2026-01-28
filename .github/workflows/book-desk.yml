@@ -18,6 +18,16 @@ on:
         required: false
         default: '7'
         type: string
+      start_time:
+        description: 'Start time in ET (e.g., 11:00). Default: 9:30'
+        required: false
+        default: ''
+        type: string
+      end_time:
+        description: 'End time in ET (e.g., 17:00). Default: 17:30'
+        required: false
+        default: ''
+        type: string
       dry_run:
         description: 'Dry run (check only, no booking)'
         required: false
@@ -47,7 +57,14 @@ jobs:
           APPSPACE_SESSION_TOKEN: ${{ secrets.APPSPACE_SESSION_TOKEN }}
           APPSPACE_REFRESH_TOKEN: ${{ secrets.APPSPACE_REFRESH_TOKEN }}
         run: |
-          python book_desk.py --days-ahead ${{ inputs.days_ahead || '7' }}
+          ARGS="--days-ahead ${{ inputs.days_ahead || '7' }}"
+          if [ -n "${{ inputs.start_time }}" ]; then
+            ARGS="$ARGS --start-time ${{ inputs.start_time }}"
+          fi
+          if [ -n "${{ inputs.end_time }}" ]; then
+            ARGS="$ARGS --end-time ${{ inputs.end_time }}"
+          fi
+          python book_desk.py $ARGS
       
       - name: Summary
         if: always()
