@@ -37,8 +37,19 @@ START_MINUTE = 30
 END_HOUR = 17
 END_MINUTE = 30
 
-# Days in advance to book
+# Days in advance to book (default, can be overridden with --days-ahead N)
 DAYS_AHEAD = 7
+
+
+def get_days_ahead():
+    """Get days ahead from command line or use default."""
+    for i, arg in enumerate(sys.argv):
+        if arg == "--days-ahead" and i + 1 < len(sys.argv):
+            try:
+                return int(sys.argv[i + 1])
+            except ValueError:
+                pass
+    return DAYS_AHEAD
 
 # =============================================================================
 # TOKEN MANAGEMENT
@@ -104,11 +115,13 @@ def try_refresh_token(tokens):
 # BOOKING FUNCTIONS
 # =============================================================================
 
-def get_booking_date():
-    """Calculate the date to book (7 days from now in Eastern time)."""
+def get_booking_date(days_ahead=None):
+    """Calculate the date to book (N days from now in Eastern time)."""
     eastern = ZoneInfo(TIMEZONE)
     now = datetime.now(eastern)
-    booking_date = now + timedelta(days=DAYS_AHEAD)
+    if days_ahead is None:
+        days_ahead = get_days_ahead()
+    booking_date = now + timedelta(days=days_ahead)
     return booking_date.date()
 
 

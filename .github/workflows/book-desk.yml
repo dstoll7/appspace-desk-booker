@@ -13,6 +13,11 @@ on:
   # Allow manual trigger from GitHub UI
   workflow_dispatch:
     inputs:
+      days_ahead:
+        description: 'Days ahead to book (default: 7)'
+        required: false
+        default: '7'
+        type: string
       dry_run:
         description: 'Dry run (check only, no booking)'
         required: false
@@ -42,7 +47,7 @@ jobs:
           APPSPACE_SESSION_TOKEN: ${{ secrets.APPSPACE_SESSION_TOKEN }}
           APPSPACE_REFRESH_TOKEN: ${{ secrets.APPSPACE_REFRESH_TOKEN }}
         run: |
-          python book_desk.py
+          python book_desk.py --days-ahead ${{ inputs.days_ahead || '7' }}
       
       - name: Summary
         if: always()
