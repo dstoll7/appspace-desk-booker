@@ -477,13 +477,13 @@ def checkin_reservation(tokens):
         return True
     
     # Parse start time and check if we're in the check-in window
-    # Window is 30 minutes before to 30 minutes after start time (wider for reliability)
+    # Appspace window is exactly 15 minutes before to 15 minutes after start time
     if start_at:
         try:
             start_dt = datetime.fromisoformat(start_at.replace("Z", "+00:00")).astimezone(eastern)
             now = datetime.now(eastern)
-            window_start = start_dt - timedelta(minutes=30)
-            window_end = start_dt + timedelta(minutes=30)
+            window_start = start_dt - timedelta(minutes=15)
+            window_end = start_dt + timedelta(minutes=15)
             
             print(f"   Check-in window: {window_start.strftime('%I:%M %p')} - {window_end.strftime('%I:%M %p ET')}")
             print(f"   Current time: {now.strftime('%I:%M %p ET')}")
