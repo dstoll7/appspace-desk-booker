@@ -1,15 +1,16 @@
 name: Check In to Desk
 
 on:
-  # Run at 9:25 AM Eastern Time, Monday-Friday (solidly in check-in window)
-  # Appspace check-in window is exactly 9:15 AM - 9:45 AM ET (15 min before/after 9:30 AM start)
-  # Using 9:25 AM to be safely in the middle of the window
+  # Run at 9:00 AM Eastern Time, Monday-Friday
+  # Scheduled early to handle GitHub Actions cron delays (can be 20-45+ min late)
+  # Script will wait until 9:15 AM when check-in window opens
+  # Check-in window: 9:15 AM - 9:45 AM ET (15 min before/after 9:30 AM start)
   # Two entries to handle DST:
-  #   EST (Nov-Mar): 9:25 AM ET = 14:25 UTC
-  #   EDT (Mar-Nov): 9:25 AM ET = 13:25 UTC
+  #   EST (Nov-Mar): 9:00 AM ET = 14:00 UTC
+  #   EDT (Mar-Nov): 9:00 AM ET = 13:00 UTC
   schedule:
-    - cron: '25 14 * * 1-5'  # 9:25 AM EST (Nov-Mar)
-    - cron: '25 13 * * 1-5'  # 9:25 AM EDT (Mar-Nov)
+    - cron: '0 14 * * 1-5'  # 9:00 AM EST (Nov-Mar)
+    - cron: '0 13 * * 1-5'  # 9:00 AM EDT (Mar-Nov)
   
   # Allow manual trigger from GitHub UI
   workflow_dispatch:
@@ -45,7 +46,7 @@ jobs:
           echo "## ✅ Desk Check-In Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Desk**: 08W-125-G (7 Hudson, 8th Floor)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Scheduled**: 9:25 AM ET" >> $GITHUB_STEP_SUMMARY
+          echo "- **Scheduled**: 9:00 AM ET" >> $GITHUB_STEP_SUMMARY
           echo "- **Actual run**: $(TZ='America/New_York' date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "Check-in window: 9:15 AM - 9:45 AM ET (Appspace enforced)" >> $GITHUB_STEP_SUMMARY
