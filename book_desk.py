@@ -11,6 +11,7 @@ Environment Variables Required:
 import json
 import os
 import sys
+import time
 from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 import requests
@@ -30,6 +31,10 @@ USER_EMAIL = "Daniel.Stoll@disney.com"
 # Desk details
 DESK_RESOURCE_ID = "3a1b388a-08ec-4e16-acde-cebd64ebc86d"
 DESK_NAME = "08W-125-G"
+
+# Maximum time to wait if check-in runs early (in minutes)
+# This handles GitHub Actions cron timing variability
+MAX_CHECKIN_WAIT_MINUTES = 30
 
 # Booking time (local Eastern time) - defaults, can be overridden with --start-time and --end-time
 DEFAULT_START_HOUR = 9
@@ -489,11 +494,24 @@ def checkin_reservation(tokens):
             print(f"   Current time: {now.strftime('%I:%M %p ET')}")
             
             if now < window_start:
-                minutes_until = int((window_start - now).total_seconds() / 60)
-                print(f"\n⏳ Check-in window opens in {minutes_until} minutes")
-                print("   Too early - check-in NOT performed")
-                # Return "early" to indicate skipped (not a failure, but not success either)
-                return "early"
+                seconds_until = (window_start - now).total_seconds()
+                minutes_until = int(seconds_until / 60)
+                
+                # If within our max wait threshold, sleep until window opens
+                if minutes_until <= MAX_CHECKIN_WAIT_MINUTES:
+                    # Add 30 second buffer to ensure we're solidly in the window
+                    wait_seconds = seconds_until + 30
+                    print(f"\n⏳ Check-in window opens in {minutes_until} minutes")
+                    print(f"   Waiting {int(wait_seconds)} seconds until window opens...")
+                    time.sleep(wait_seconds)
+                    # Update 'now' after sleeping
+                    now = datetime.now(eastern)
+                    print(f"   Resumed at {now.strftime('%I:%M %p ET')} - proceeding with check-in")
+                else:
+                    # Too early even for waiting - something is wrong
+                    print(f"\n⏳ Check-in window opens in {minutes_until} minutes")
+                    print(f"   Too early to wait (max wait is {MAX_CHECKIN_WAIT_MINUTES} min)")
+                    return "early"
             elif now > window_end:
                 print(f"\n⚠️  Check-in window closed {int((now - window_end).total_seconds() / 60)} minutes ago")
                 print("   Will attempt check-in anyway...")
