@@ -14,8 +14,8 @@ Automatically books desk **08W-125-G** at 7 Hudson, 7 days in advance using GitH
 
 | Workflow | Schedule | Purpose |
 |----------|----------|---------|
-| **Book Desk Daily** | 11:00 PM ET (Sun-Thu) | Books desk 7 days in advance (runs night before to beat other bookers) |
-| **Check In to Desk** | 9:20 AM ET (Mon-Fri) | Auto check-in (within 9:00-10:00 AM window) |
+| **Book Desk Daily** | 11:00 PM ET (Mon-Thu) | Books desk 7 days in advance (runs night before to beat other bookers) |
+| **Check In to Desk** | 9:20 AM ET (Mon-Thu) | Auto check-in (within 9:00-10:00 AM window) |
 
 ## Setup
 
@@ -51,7 +51,7 @@ You can trigger the workflow manually:
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  GitHub Actions (runs at 11:00 PM ET, Sun-Thu)              │
+│  GitHub Actions (runs at 11:00 PM ET, Mon-Thu)              │
 ├─────────────────────────────────────────────────────────────┤
 │  1. Check if YOU already have desk booked for target date   │
 │  2. Lock the desk resource                                  │
