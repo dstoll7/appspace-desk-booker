@@ -156,8 +156,8 @@ def get_booking_date(days_ahead=None):
 
 
 def is_weekday(date):
-    """Check if the date is a weekday (Mon-Fri)."""
-    return date.weekday() < 5  # 0=Mon, 4=Fri
+    """Check if the date is Mon-Thu."""
+    return date.weekday() < 4  # 0=Mon, 3=Thu
 
 
 def create_reservation(tokens):
@@ -168,9 +168,9 @@ def create_reservation(tokens):
     # Calculate booking datetime
     booking_date = get_booking_date()
     
-    # Skip weekends
+    # Skip Fri-Sun
     if not is_weekday(booking_date):
-        print(f"⏭️  Skipping {booking_date.strftime('%A')} - not a weekday")
+        print(f"⏭️  Skipping {booking_date.strftime('%A')} - not a Mon-Thu booking day")
         return True  # Return True so we don't fail the workflow
     
     # Get booking times (may be overridden via command line)
