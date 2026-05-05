@@ -159,13 +159,30 @@ def _extract_source_id(jwt_token):
 # =============================================================================
 
 def get_booking_date(days_ahead=None):
-    """Calculate the date to book (N days from now in Eastern time)."""
+    """Calculate the date to book (N days from now in Eastern time).
+
+    Appspace enforces a 168-hour (exactly 7 days) booking window.
+    If the requested booking would exceed that, reduce days_ahead by 1.
+    """
     eastern = ZoneInfo(TIMEZONE)
     now = datetime.now(eastern)
     if days_ahead is None:
         days_ahead = get_days_ahead()
-    booking_date = now + timedelta(days=days_ahead)
-    return booking_date.date()
+
+    start_hour, start_minute, _, _ = get_booking_times()
+    candidate_date = (now + timedelta(days=days_ahead)).date()
+    candidate_start = datetime(
+        candidate_date.year, candidate_date.month, candidate_date.day,
+        start_hour, start_minute, 0, tzinfo=eastern,
+    )
+
+    # If booking start is more than 168 hours away, reduce by 1 day
+    hours_until = (candidate_start - now).total_seconds() / 3600
+    if hours_until > 168:
+        days_ahead -= 1
+        candidate_date = (now + timedelta(days=days_ahead)).date()
+
+    return candidate_date
 
 
 def is_weekday(date):
