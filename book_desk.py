@@ -8,6 +8,7 @@ Environment Variables Required:
   - APPSPACE_REFRESH_TOKEN: Refresh token (optional, for token renewal)
 """
 
+import base64
 import json
 import os
 import sys
@@ -101,16 +102,15 @@ def get_tokens():
 
 
 def try_refresh_token(tokens):
-    """Attempt to refresh/extend the session using the refresh token.
+    """Refresh the session using the refresh token.
 
-    Calls the refreshToken grant type which doesn't require a valid session
-    in the header. This keeps the session alive by touching the auth system
-    even if the session token is close to its idle timeout.
+    Calls the refreshToken grant type (works without valid session header),
+    then extracts the real session token from the JWT's sourceId field.
+    This can recover a fully expired session.
     """
     if not tokens.get("refresh_token"):
         return tokens
 
-    # Use refreshToken grant (works without valid session header)
     payload = {
         "subjectId": USER_ID,
         "subjectType": "UserStreaming",
@@ -128,15 +128,30 @@ def try_refresh_token(tokens):
 
         if response.status_code == 200:
             data = response.json()
-            print("✓ Token refreshed successfully")
-            return {
-                "session_token": tokens["session_token"],
-                "refresh_token": data.get("refreshToken", tokens["refresh_token"]),
-            }
+            # Extract the session token from the JWT's sourceId claim
+            access_token = data.get("accessToken", "")
+            session_from_jwt = _extract_source_id(access_token)
+            if session_from_jwt:
+                print("✓ Token refreshed successfully")
+                return {
+                    "session_token": session_from_jwt,
+                    "refresh_token": data.get("refreshToken", tokens["refresh_token"]),
+                }
     except Exception as e:
         print(f"⚠ Token refresh failed: {e}")
 
     return tokens
+
+
+def _extract_source_id(jwt_token):
+    """Extract the sourceId (session token) from a JWT access token."""
+    try:
+        parts = jwt_token.split(".")
+        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+        claims = json.loads(base64.b64decode(payload_b64))
+        return claims.get("sourceId")
+    except Exception:
+        return None
 
 
 # =============================================================================

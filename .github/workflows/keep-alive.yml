@@ -35,7 +35,7 @@ jobs:
 
           echo "⚠ Session returned $STATUS, attempting refresh..."
 
-          # Try using refresh token to wake up the session
+          # Use refresh token to revive session (works even when session is expired)
           if [ -n "$APPSPACE_REFRESH_TOKEN" ]; then
             REFRESH_RESP=$(curl -s -X POST \
               -H "Content-Type: application/json" \
@@ -45,18 +45,30 @@ jobs:
             if echo "$REFRESH_RESP" | grep -q "accessToken"; then
               echo "✓ Refresh token call succeeded"
 
-              # Retry the session ping
+              # Extract session token from JWT sourceId
+              ACCESS_TOKEN=$(echo "$REFRESH_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])")
+              SESSION_TOKEN=$(echo "$ACCESS_TOKEN" | python3 -c "
+          import sys, base64, json
+          parts = sys.stdin.read().strip().split('.')
+          payload = parts[1] + '=' * (4 - len(parts[1]) % 4)
+          claims = json.loads(base64.b64decode(payload))
+          print(claims['sourceId'])
+          ")
+
+              echo "Recovered session token: ${SESSION_TOKEN:0:10}..."
+
+              # Verify recovered token works
               STATUS2=$(curl -s -o /dev/null -w "%{http_code}" \
                 -H "Accept: application/json" \
-                -H "token: $APPSPACE_SESSION_TOKEN" \
+                -H "token: $SESSION_TOKEN" \
                 "https://disney.cloud.appspace.com/api/v3/users/me")
 
               if [ "$STATUS2" = "200" ]; then
-                echo "✓ Session revived after refresh"
+                echo "✓ Session recovered via refresh token"
                 exit 0
               fi
             fi
           fi
 
-          echo "❌ Session is dead. Run: python refresh_token.py --headed"
+          echo "❌ Session is dead and refresh failed. Run: python refresh_token.py --headed"
           exit 1
