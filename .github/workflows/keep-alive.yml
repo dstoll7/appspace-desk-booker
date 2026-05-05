@@ -1,0 +1,62 @@
+name: Keep Session Alive
+
+on:
+  # Run daily at 12:00 PM ET to keep the session token from expiring
+  # The session has a ~72h idle timeout, so daily pings prevent expiry
+  # This covers the Fri-Sun gap when book/checkin workflows don't run
+  schedule:
+    - cron: '0 17 * * *'   # 12:00 PM EST (Nov-Mar)
+    - cron: '0 16 * * *'   # 12:00 PM EDT (Mar-Nov)
+
+  workflow_dispatch:
+
+jobs:
+  keep-alive:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Ping Appspace API
+        env:
+          APPSPACE_SESSION_TOKEN: ${{ secrets.APPSPACE_SESSION_TOKEN }}
+          APPSPACE_REFRESH_TOKEN: ${{ secrets.APPSPACE_REFRESH_TOKEN }}
+        run: |
+          # Simple API call to reset the session idle timer
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Accept: application/json" \
+            -H "token: $APPSPACE_SESSION_TOKEN" \
+            "https://disney.cloud.appspace.com/api/v3/users/me")
+
+          echo "API response: $STATUS"
+
+          if [ "$STATUS" = "200" ]; then
+            echo "✓ Session is alive"
+            exit 0
+          fi
+
+          echo "⚠ Session returned $STATUS, attempting refresh..."
+
+          # Try using refresh token to wake up the session
+          if [ -n "$APPSPACE_REFRESH_TOKEN" ]; then
+            REFRESH_RESP=$(curl -s -X POST \
+              -H "Content-Type: application/json" \
+              "https://disney.cloud.appspace.com/api/v3/authorization/token" \
+              -d "{\"subjectId\": \"0b7f4f61-7d08-4d14-b748-10359ab2bcf5\", \"subjectType\": \"UserStreaming\", \"grantType\": \"refreshToken\", \"refreshToken\": \"$APPSPACE_REFRESH_TOKEN\"}")
+
+            if echo "$REFRESH_RESP" | grep -q "accessToken"; then
+              echo "✓ Refresh token call succeeded"
+
+              # Retry the session ping
+              STATUS2=$(curl -s -o /dev/null -w "%{http_code}" \
+                -H "Accept: application/json" \
+                -H "token: $APPSPACE_SESSION_TOKEN" \
+                "https://disney.cloud.appspace.com/api/v3/users/me")
+
+              if [ "$STATUS2" = "200" ]; then
+                echo "✓ Session revived after refresh"
+                exit 0
+              fi
+            fi
+          fi
+
+          echo "❌ Session is dead. Run: python refresh_token.py --headed"
+          exit 1

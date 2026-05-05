@@ -101,43 +101,41 @@ def get_tokens():
 
 
 def try_refresh_token(tokens):
-    """Attempt to refresh the session token if we have a refresh token."""
+    """Attempt to refresh/extend the session using the refresh token.
+
+    Calls the refreshToken grant type which doesn't require a valid session
+    in the header. This keeps the session alive by touching the auth system
+    even if the session token is close to its idle timeout.
+    """
     if not tokens.get("refresh_token"):
         return tokens
-    
-    headers = {
-        "Content-Type": "application/json;charset=UTF-8",
-        "Accept": "application/json, text/plain, */*",
-        "token": tokens["session_token"],
-        "x-appspace-request-timezone": TIMEZONE,
-    }
-    
-    # Try to get a new token
+
+    # Use refreshToken grant (works without valid session header)
     payload = {
         "subjectId": USER_ID,
         "subjectType": "UserStreaming",
-        "grantType": "createToken",
+        "grantType": "refreshToken",
+        "refreshToken": tokens["refresh_token"],
     }
-    
+
     try:
         response = requests.post(
             f"{BASE_URL}/authorization/token",
-            headers=headers,
+            headers={"Content-Type": "application/json;charset=UTF-8"},
             json=payload,
             timeout=30,
         )
-        
+
         if response.status_code == 200:
             data = response.json()
             print("✓ Token refreshed successfully")
             return {
                 "session_token": tokens["session_token"],
-                "access_token": data.get("accessToken"),
                 "refresh_token": data.get("refreshToken", tokens["refresh_token"]),
             }
     except Exception as e:
         print(f"⚠ Token refresh failed: {e}")
-    
+
     return tokens
 
 

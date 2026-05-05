@@ -16,6 +16,12 @@ ENV/
 tokens.json
 *.token
 
+# Playwright browser state (contains session cookies)
+.playwright-state/
+
+# Virtual environment
+.venv/
+
 # OS
 .DS_Store
 Thumbs.db
