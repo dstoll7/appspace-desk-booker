@@ -33,11 +33,6 @@ on:
         required: false
         default: 'false'
         type: boolean
-      dry_run:
-        description: 'Dry run (check only, no booking)'
-        required: false
-        default: 'false'
-        type: boolean
 
 jobs:
   book-desk:
@@ -58,10 +53,8 @@ jobs:
           pip install requests
 
       - name: Book desk
-        id: book
         env:
           APPSPACE_SESSION_TOKEN: ${{ secrets.APPSPACE_SESSION_TOKEN }}
-          APPSPACE_REFRESH_TOKEN: ${{ secrets.APPSPACE_REFRESH_TOKEN }}
         run: |
           ARGS="--days-ahead ${{ inputs.days_ahead || '7' }}"
           if [ -n "${{ inputs.start_time }}" ]; then
@@ -74,15 +67,6 @@ jobs:
             ARGS="$ARGS --force"
           fi
           python book_desk.py $ARGS
-
-      - name: Persist refreshed tokens
-        if: always() && steps.book.outputs.tokens_refreshed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: |
-          gh secret set APPSPACE_SESSION_TOKEN --repo "${{ github.repository }}" --body "${{ steps.book.outputs.session_token }}"
-          gh secret set APPSPACE_REFRESH_TOKEN --repo "${{ github.repository }}" --body "${{ steps.book.outputs.refresh_token }}"
-          echo "✓ Refreshed tokens persisted to GitHub Secrets"
 
       - name: Summary
         if: always()

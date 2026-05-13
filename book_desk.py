@@ -8,8 +8,6 @@ Environment Variables Required:
   - APPSPACE_REFRESH_TOKEN: Refresh token (optional, for token renewal)
 """
 
-import base64
-import json
 import os
 import sys
 import time
@@ -89,88 +87,14 @@ def should_force():
 def get_tokens():
     """Get tokens from environment variables."""
     session_token = os.environ.get("APPSPACE_SESSION_TOKEN")
-    refresh_token = os.environ.get("APPSPACE_REFRESH_TOKEN")
-    
+
     if not session_token:
         print("ERROR: APPSPACE_SESSION_TOKEN environment variable not set")
         sys.exit(1)
-    
+
     return {
         "session_token": session_token,
-        "refresh_token": refresh_token,
     }
-
-
-def try_refresh_token(tokens):
-    """Refresh the session using the refresh token.
-
-    Calls the refreshToken grant type (works without valid session header),
-    then extracts the real session token from the JWT's sourceId field.
-    This can recover a fully expired session.
-    """
-    if not tokens.get("refresh_token"):
-        return tokens
-
-    payload = {
-        "subjectId": USER_ID,
-        "subjectType": "UserStreaming",
-        "grantType": "refreshToken",
-        "refreshToken": tokens["refresh_token"],
-    }
-
-    try:
-        response = requests.post(
-            f"{BASE_URL}/authorization/token",
-            headers={"Content-Type": "application/json;charset=UTF-8"},
-            json=payload,
-            timeout=30,
-        )
-
-        if response.status_code == 200:
-            data = response.json()
-            access_token = data.get("accessToken", "")
-            session_from_jwt = _extract_source_id(access_token)
-            new_refresh = data.get("refreshToken", tokens["refresh_token"])
-            if session_from_jwt:
-                print("✓ Token refreshed successfully")
-                _emit_refreshed_tokens(session_from_jwt, new_refresh)
-                return {
-                    "session_token": session_from_jwt,
-                    "refresh_token": new_refresh,
-                }
-    except Exception as e:
-        print(f"⚠ Token refresh failed: {e}")
-
-    return tokens
-
-
-def _emit_refreshed_tokens(session_token, refresh_token):
-    """Write refreshed tokens to GITHUB_OUTPUT so subsequent steps can persist them."""
-    output_file = os.environ.get("GITHUB_OUTPUT")
-    if not output_file:
-        return
-    try:
-        with open(output_file, "a") as f:
-            f.write(f"session_token={session_token}\n")
-            f.write(f"refresh_token={refresh_token}\n")
-            f.write("tokens_refreshed=true\n")
-        # Mask tokens from logs
-        print(f"::add-mask::{session_token}")
-        print(f"::add-mask::{refresh_token}")
-        print("   (tokens written to workflow output for persistence)")
-    except Exception:
-        pass
-
-
-def _extract_source_id(jwt_token):
-    """Extract the sourceId (session token) from a JWT access token."""
-    try:
-        parts = jwt_token.split(".")
-        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
-        claims = json.loads(base64.b64decode(payload_b64))
-        return claims.get("sourceId")
-    except Exception:
-        return None
 
 
 # =============================================================================
@@ -619,10 +543,7 @@ def main():
     
     # Load tokens from environment
     tokens = get_tokens()
-    print("\n✓ Tokens loaded from environment")
-    
-    # Try to refresh token
-    tokens = try_refresh_token(tokens)
+    print("\n✓ Token loaded from environment")
     
     if do_checkin:
         # Check-in mode

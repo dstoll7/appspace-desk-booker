@@ -34,21 +34,10 @@ jobs:
           pip install requests
 
       - name: Check in to desk
-        id: checkin
         env:
           APPSPACE_SESSION_TOKEN: ${{ secrets.APPSPACE_SESSION_TOKEN }}
-          APPSPACE_REFRESH_TOKEN: ${{ secrets.APPSPACE_REFRESH_TOKEN }}
         run: |
           python book_desk.py --checkin
-
-      - name: Persist refreshed tokens
-        if: always() && steps.checkin.outputs.tokens_refreshed == 'true'
-        env:
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: |
-          gh secret set APPSPACE_SESSION_TOKEN --repo "${{ github.repository }}" --body "${{ steps.checkin.outputs.session_token }}"
-          gh secret set APPSPACE_REFRESH_TOKEN --repo "${{ github.repository }}" --body "${{ steps.checkin.outputs.refresh_token }}"
-          echo "✓ Refreshed tokens persisted to GitHub Secrets"
 
       - name: Summary
         if: always()
