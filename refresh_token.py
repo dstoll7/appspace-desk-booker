@@ -129,9 +129,12 @@ def capture_token(headed: bool = False) -> dict | None:
 
         # If we still don't have a token, try triggering an API call
         if not captured_token.get("session_token"):
-            page.goto(f"{APPSPACE_URL}/api/v3/reservation/users/me/events?limit=1",
-                      wait_until="networkidle")
-            time.sleep(2)
+            try:
+                page.goto(f"{APPSPACE_URL}/api/v3/reservation/users/me/events?limit=1",
+                          wait_until="networkidle")
+                time.sleep(2)
+            except Exception:
+                pass
 
         # Last resort: check localStorage/sessionStorage
         if not captured_token.get("session_token"):

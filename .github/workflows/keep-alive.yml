@@ -1,12 +1,10 @@
 name: Keep Session Alive
 
 on:
-  # Run daily at 12:00 PM ET to keep the session token from expiring
-  # The session has a ~72h idle timeout, so daily pings prevent expiry
-  # This covers the Fri-Sun gap when book/checkin workflows don't run
+  # Run every 4 hours to prevent session token idle expiry
+  # The session has a short idle timeout (~8-12h), so frequent pings are needed
   schedule:
-    - cron: '0 17 * * *'   # 12:00 PM EST (Nov-Mar)
-    - cron: '0 16 * * *'   # 12:00 PM EDT (Mar-Nov)
+    - cron: '0 */4 * * *'
 
   workflow_dispatch:
 
@@ -16,11 +14,12 @@ jobs:
 
     steps:
       - name: Ping Appspace API
+        id: ping
         env:
           APPSPACE_SESSION_TOKEN: ${{ secrets.APPSPACE_SESSION_TOKEN }}
           APPSPACE_REFRESH_TOKEN: ${{ secrets.APPSPACE_REFRESH_TOKEN }}
         run: |
-          # Simple API call to reset the session idle timer
+          # Try the session token first
           STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
             -H "Accept: application/json" \
             -H "token: $APPSPACE_SESSION_TOKEN" \
@@ -35,40 +34,62 @@ jobs:
 
           echo "⚠ Session returned $STATUS, attempting refresh..."
 
-          # Use refresh token to revive session (works even when session is expired)
-          if [ -n "$APPSPACE_REFRESH_TOKEN" ]; then
-            REFRESH_RESP=$(curl -s -X POST \
-              -H "Content-Type: application/json" \
-              "https://disney.cloud.appspace.com/api/v3/authorization/token" \
-              -d "{\"subjectId\": \"0b7f4f61-7d08-4d14-b748-10359ab2bcf5\", \"subjectType\": \"UserStreaming\", \"grantType\": \"refreshToken\", \"refreshToken\": \"$APPSPACE_REFRESH_TOKEN\"}")
+          if [ -z "$APPSPACE_REFRESH_TOKEN" ]; then
+            echo "❌ No refresh token available"
+            exit 1
+          fi
 
-            if echo "$REFRESH_RESP" | grep -q "accessToken"; then
-              echo "✓ Refresh token call succeeded"
+          # Use refresh token to get new tokens
+          REFRESH_RESP=$(curl -s -X POST \
+            -H "Content-Type: application/json" \
+            "https://disney.cloud.appspace.com/api/v3/authorization/token" \
+            -d "{\"subjectId\": \"0b7f4f61-7d08-4d14-b748-10359ab2bcf5\", \"subjectType\": \"UserStreaming\", \"grantType\": \"refreshToken\", \"refreshToken\": \"$APPSPACE_REFRESH_TOKEN\"}")
 
-              # Extract session token from JWT sourceId
-              ACCESS_TOKEN=$(echo "$REFRESH_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])")
-              SESSION_TOKEN=$(echo "$ACCESS_TOKEN" | python3 -c "
+          if ! echo "$REFRESH_RESP" | grep -q "accessToken"; then
+            echo "❌ Refresh failed - no accessToken in response"
+            echo "   Response: $REFRESH_RESP"
+            echo "   Run: python refresh_token.py --headed"
+            exit 1
+          fi
+
+          echo "✓ Refresh token call succeeded"
+
+          # Extract session token from JWT sourceId
+          ACCESS_TOKEN=$(echo "$REFRESH_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin)['accessToken'])")
+          NEW_SESSION=$(echo "$ACCESS_TOKEN" | python3 -c "
           import sys, base64, json
           parts = sys.stdin.read().strip().split('.')
           payload = parts[1] + '=' * (4 - len(parts[1]) % 4)
           claims = json.loads(base64.b64decode(payload))
           print(claims['sourceId'])
           ")
+          NEW_REFRESH=$(echo "$REFRESH_RESP" | python3 -c "import sys,json; print(json.load(sys.stdin).get('refreshToken',''))")
 
-              echo "Recovered session token: ${SESSION_TOKEN:0:10}..."
+          echo "Recovered session token: ${NEW_SESSION:0:10}..."
 
-              # Verify recovered token works
-              STATUS2=$(curl -s -o /dev/null -w "%{http_code}" \
-                -H "Accept: application/json" \
-                -H "token: $SESSION_TOKEN" \
-                "https://disney.cloud.appspace.com/api/v3/users/me")
+          # Verify recovered token works
+          STATUS2=$(curl -s -o /dev/null -w "%{http_code}" \
+            -H "Accept: application/json" \
+            -H "token: $NEW_SESSION" \
+            "https://disney.cloud.appspace.com/api/v3/users/me")
 
-              if [ "$STATUS2" = "200" ]; then
-                echo "✓ Session recovered via refresh token"
-                exit 0
-              fi
-            fi
+          if [ "$STATUS2" = "200" ]; then
+            echo "✓ Session recovered via refresh token"
+            echo "session_token=$NEW_SESSION" >> "$GITHUB_OUTPUT"
+            echo "refresh_token=$NEW_REFRESH" >> "$GITHUB_OUTPUT"
+            echo "tokens_refreshed=true" >> "$GITHUB_OUTPUT"
+            exit 0
           fi
 
-          echo "❌ Session is dead and refresh failed. Run: python refresh_token.py --headed"
+          echo "❌ Recovered token also returns $STATUS2 - fully expired"
+          echo "   Run: python refresh_token.py --headed"
           exit 1
+
+      - name: Persist refreshed tokens
+        if: always() && steps.ping.outputs.tokens_refreshed == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GH_PAT }}
+        run: |
+          gh secret set APPSPACE_SESSION_TOKEN --repo "${{ github.repository }}" --body "${{ steps.ping.outputs.session_token }}"
+          gh secret set APPSPACE_REFRESH_TOKEN --repo "${{ github.repository }}" --body "${{ steps.ping.outputs.refresh_token }}"
+          echo "✓ Refreshed tokens persisted to GitHub Secrets"

@@ -128,19 +128,38 @@ def try_refresh_token(tokens):
 
         if response.status_code == 200:
             data = response.json()
-            # Extract the session token from the JWT's sourceId claim
             access_token = data.get("accessToken", "")
             session_from_jwt = _extract_source_id(access_token)
+            new_refresh = data.get("refreshToken", tokens["refresh_token"])
             if session_from_jwt:
                 print("✓ Token refreshed successfully")
+                _emit_refreshed_tokens(session_from_jwt, new_refresh)
                 return {
                     "session_token": session_from_jwt,
-                    "refresh_token": data.get("refreshToken", tokens["refresh_token"]),
+                    "refresh_token": new_refresh,
                 }
     except Exception as e:
         print(f"⚠ Token refresh failed: {e}")
 
     return tokens
+
+
+def _emit_refreshed_tokens(session_token, refresh_token):
+    """Write refreshed tokens to GITHUB_OUTPUT so subsequent steps can persist them."""
+    output_file = os.environ.get("GITHUB_OUTPUT")
+    if not output_file:
+        return
+    try:
+        with open(output_file, "a") as f:
+            f.write(f"session_token={session_token}\n")
+            f.write(f"refresh_token={refresh_token}\n")
+            f.write("tokens_refreshed=true\n")
+        # Mask tokens from logs
+        print(f"::add-mask::{session_token}")
+        print(f"::add-mask::{refresh_token}")
+        print("   (tokens written to workflow output for persistence)")
+    except Exception:
+        pass
 
 
 def _extract_source_id(jwt_token):
