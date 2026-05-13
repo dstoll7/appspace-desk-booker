@@ -53,6 +53,13 @@ def capture_token(headed: bool = False) -> dict | None:
         print("No saved browser state found. Launching visible browser for SSO login...")
         headless = False
 
+    # When headed, clear saved state to force full SSO re-login.
+    # This ensures the authorization/token endpoint is called, giving us a refresh token.
+    if headed and has_state:
+        STATE_FILE.unlink()
+        has_state = False
+        print("Cleared saved browser state to force fresh login (needed for refresh token)")
+
     print(f"Launching browser ({'headless' if headless else 'visible'})...")
 
     with sync_playwright() as p:
@@ -67,25 +74,31 @@ def capture_token(headed: bool = False) -> dict | None:
         captured_token = {}
 
         def handle_response(response):
-            """Intercept API responses to find the session token."""
+            """Intercept API responses to find tokens."""
             url = response.url
-            # Capture token from any successful Appspace API call's request headers
-            if "disney.cloud.appspace.com/api/" in url and response.status == 200:
-                request = response.request
-                token = request.headers.get("token")
-                if token and len(token) > 20:
-                    captured_token["session_token"] = token
 
-            # Also capture from authorization/token response body
+            # Capture from authorization/token response body
             if "authorization/token" in url and response.status == 200:
                 try:
                     body = response.json()
-                    if body.get("accessToken"):
-                        captured_token["session_token"] = body["accessToken"]
                     if body.get("refreshToken"):
                         captured_token["refresh_token"] = body["refreshToken"]
+                    if body.get("accessToken"):
+                        parts = body["accessToken"].split(".")
+                        import base64
+                        payload_b64 = parts[1] + "=" * (4 - len(parts[1]) % 4)
+                        claims = json.loads(base64.b64decode(payload_b64))
+                        if claims.get("sourceId"):
+                            captured_token["session_token"] = claims["sourceId"]
                 except Exception:
                     pass
+
+            # Capture token from API request headers
+            if "disney.cloud.appspace.com/api/" in url and response.status == 200:
+                request = response.request
+                token = request.headers.get("token")
+                if token and len(token) > 20 and "session_token" not in captured_token:
+                    captured_token["session_token"] = token
 
         page.on("response", handle_response)
 
@@ -136,29 +149,21 @@ def capture_token(headed: bool = False) -> dict | None:
             except Exception:
                 pass
 
-        # Last resort: check localStorage/sessionStorage
-        if not captured_token.get("session_token"):
-            try:
-                token = page.evaluate("""() => {
-                    return localStorage.getItem('token') ||
-                           localStorage.getItem('sessionToken') ||
-                           localStorage.getItem('access_token') ||
-                           sessionStorage.getItem('token') ||
-                           sessionStorage.getItem('sessionToken') ||
-                           '';
-                }""")
-                if token:
-                    captured_token["session_token"] = token
-            except Exception:
-                pass
-
-        # Check cookies too
-        if not captured_token.get("session_token"):
+        # Get tokens from cookies (most reliable source)
+        try:
             cookies = context.cookies()
-            for cookie in cookies:
-                if cookie["name"].lower() in ("token", "session_token", "appspace_token"):
-                    captured_token["session_token"] = cookie["value"]
-                    break
+            appspace_cookies = {c["name"]: c["value"] for c in cookies if "appspace" in c.get("domain", "")}
+            # appspace-session-token is the session token
+            if appspace_cookies.get("appspace-session-token"):
+                captured_token["session_token"] = appspace_cookies["appspace-session-token"]
+                print(f"   ✓ Session token from cookie: {appspace_cookies['appspace-session-token'][:10]}...")
+            # appspace-core-token is the refresh/long-lived token
+            if appspace_cookies.get("appspace-core-token"):
+                captured_token["refresh_token"] = appspace_cookies["appspace-core-token"]
+                print(f"   ✓ Refresh token from cookie (appspace-core-token)")
+        except Exception as e:
+            print(f"   ⚠ Could not read cookies: {e}")
+
 
         # Save browser state for next time (skip SSO)
         context.storage_state(path=str(STATE_FILE))
