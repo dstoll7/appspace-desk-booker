@@ -28,6 +28,20 @@ STATE_FILE = STATE_DIR / "auth-state.json"
 GITHUB_REPO = "dstoll7/appspace-desk-booker"
 
 
+def validate_token(token: str) -> bool:
+    """Confirm the token works against the Appspace API before saving it."""
+    import urllib.request
+    req = urllib.request.Request(
+        f"{APPSPACE_URL}/api/v3/users/me",
+        headers={"Accept": "application/json", "token": token},
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            return resp.status == 200
+    except Exception:
+        return False
+
+
 def update_github_secret(name: str, value: str) -> bool:
     """Update a GitHub Actions secret using the gh CLI."""
     result = subprocess.run(
@@ -199,6 +213,14 @@ def main():
     session_token = tokens["session_token"]
     print(f"\n✓ Captured session token: {session_token[:10]}...{session_token[-6:]}")
     print(f"  Token length: {len(session_token)}")
+
+    print("\nValidating token against Appspace API...")
+    if not validate_token(session_token):
+        print("  ERROR: Captured token failed API validation — aborting secret update.")
+        print("  The browser may not have fully completed the SSO flow.")
+        print("  Try running again and wait until the Appspace dashboard fully loads.")
+        sys.exit(1)
+    print("  ✓ Token validated successfully")
 
     if args.dry_run:
         print("\n[DRY RUN] Would update APPSPACE_SESSION_TOKEN and PLAYWRIGHT_AUTH_STATE")
