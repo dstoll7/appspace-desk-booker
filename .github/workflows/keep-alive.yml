@@ -2,7 +2,6 @@ name: Keep Session Alive
 
 on:
   # Run every 2 hours to prevent session token idle expiry
-  # The session expires after ~8-12h of inactivity
   schedule:
     - cron: '0 */2 * * *'
 
@@ -11,7 +10,6 @@ on:
 jobs:
   keep-alive:
     runs-on: ubuntu-latest
-
     steps:
       - name: Ping Appspace API
         env:
@@ -30,6 +28,109 @@ jobs:
           fi
 
           echo "❌ Session is dead (HTTP $STATUS)"
-          echo "   The local cron job should recover this automatically."
-          echo "   If not, run: python refresh_token.py --headed"
           exit 1
+
+  # When the token is dead, attempt headless Playwright re-auth using stored Okta cookies.
+  # This works as long as the Okta session (stored in PLAYWRIGHT_AUTH_STATE) is still valid.
+  # If it fails, open a GitHub Issue to prompt manual refresh.
+  auto-refresh:
+    runs-on: ubuntu-latest
+    needs: keep-alive
+    if: always() && needs.keep-alive.result == 'failure'
+    permissions:
+      issues: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Playwright
+        run: |
+          pip install playwright
+          playwright install chromium --with-deps
+
+      - name: Attempt headless token refresh
+        id: headless-refresh
+        env:
+          PLAYWRIGHT_AUTH_STATE: ${{ secrets.PLAYWRIGHT_AUTH_STATE }}
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        continue-on-error: true
+        run: |
+          if [ -z "$PLAYWRIGHT_AUTH_STATE" ]; then
+            echo "No PLAYWRIGHT_AUTH_STATE secret found."
+            echo "Run refresh_token.py locally to seed this secret, then headless CI re-auth will work."
+            exit 1
+          fi
+          python refresh_token.py --ci
+
+      - name: Create GitHub Issue if headless refresh also failed
+        if: steps.headless-refresh.outcome == 'failure'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # Create the label if it doesn't exist yet
+          gh label create "token-expired" --color "B60205" \
+            --description "Appspace session token has expired, manual refresh needed" \
+            --repo ${{ github.repository }} 2>/dev/null || true
+
+          # Only open one issue at a time
+          EXISTING=$(gh issue list \
+            --label "token-expired" \
+            --state open \
+            --json number \
+            --repo ${{ github.repository }} \
+            -q '.[0].number' 2>/dev/null)
+
+          if [ -z "$EXISTING" ]; then
+            gh issue create \
+              --title "🔐 Appspace session token expired — manual refresh required" \
+              --label "token-expired" \
+              --repo ${{ github.repository }} \
+              --body "$(cat <<'EOF'
+The Appspace session token has expired and automated headless re-auth also failed (Okta session has likely expired too).
+
+**Action required:** On your Mac, run:
+
+\`\`\`bash
+cd ~/Documents/GitHub/appspace-desk-booker
+python refresh_token.py
+\`\`\`
+
+Approve the Okta push notification in the browser that opens. The script will update both \`APPSPACE_SESSION_TOKEN\` and \`PLAYWRIGHT_AUTH_STATE\` in GitHub Secrets automatically.
+
+This issue will close automatically once keep-alive passes again.
+EOF
+)"
+          else
+            echo "Issue #$EXISTING already open — skipping duplicate"
+          fi
+
+  # Close any stale token-expired issue when the token recovers
+  close-issue:
+    runs-on: ubuntu-latest
+    needs: keep-alive
+    if: always() && needs.keep-alive.result == 'success'
+    permissions:
+      issues: write
+    steps:
+      - name: Close stale token-expired issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh issue list \
+            --label "token-expired" \
+            --state open \
+            --json number \
+            --repo ${{ github.repository }} \
+            -q '.[0].number' 2>/dev/null)
+
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" \
+              --repo ${{ github.repository }} \
+              --comment "✅ Token is healthy again — closing automatically."
+            echo "Closed issue #$EXISTING"
+          fi

@@ -6,14 +6,15 @@ Opens a browser to Appspace, captures the session token from cookies/headers,
 and updates the GitHub Secret.
 
 Usage:
-    python refresh_token.py          # Headed browser (default)
-    python refresh_token.py --headless # Headless (only works if SSO session is active)
-    python refresh_token.py --dry-run  # Don't update GitHub secrets
+    python refresh_token.py              # Headed browser (default)
+    python refresh_token.py --headless   # Headless (only works if SSO session is active)
+    python refresh_token.py --ci         # CI mode: load Okta state from env, run headless
+    python refresh_token.py --dry-run    # Don't update GitHub secrets
 """
 
 import argparse
-import json
-import re
+import base64
+import os
 import subprocess
 import sys
 import time
@@ -27,7 +28,7 @@ STATE_FILE = STATE_DIR / "auth-state.json"
 GITHUB_REPO = "dstoll7/appspace-desk-booker"
 
 
-def update_github_secret(name: str, value: str):
+def update_github_secret(name: str, value: str) -> bool:
     """Update a GitHub Actions secret using the gh CLI."""
     result = subprocess.run(
         ["gh", "secret", "set", name, "--repo", GITHUB_REPO, "--body", value],
@@ -38,6 +39,36 @@ def update_github_secret(name: str, value: str):
         print(f"  ERROR updating secret: {result.stderr}")
         return False
     return True
+
+
+def load_state_from_env() -> bool:
+    """Load Playwright auth state from PLAYWRIGHT_AUTH_STATE env var (base64 JSON)."""
+    state_b64 = os.environ.get("PLAYWRIGHT_AUTH_STATE")
+    if not state_b64:
+        return False
+    try:
+        STATE_DIR.mkdir(exist_ok=True)
+        state_json = base64.b64decode(state_b64).decode("utf-8")
+        STATE_FILE.write_text(state_json)
+        print("Loaded Okta/Appspace auth state from environment")
+        return True
+    except Exception as e:
+        print(f"WARNING: Could not load auth state from env: {e}")
+        return False
+
+
+def save_state_to_secret() -> bool:
+    """Encode current Playwright state and store it as PLAYWRIGHT_AUTH_STATE secret."""
+    if not STATE_FILE.exists():
+        return False
+    try:
+        state_b64 = base64.b64encode(STATE_FILE.read_bytes()).decode()
+        if update_github_secret("PLAYWRIGHT_AUTH_STATE", state_b64):
+            print("  ✓ PLAYWRIGHT_AUTH_STATE updated (seeds future headless CI re-auth)")
+            return True
+    except Exception as e:
+        print(f"  WARNING: Could not save auth state to secret: {e}")
+    return False
 
 
 def capture_token(headed: bool = True) -> dict | None:
@@ -124,7 +155,7 @@ def capture_token(headed: bool = True) -> dict | None:
         except Exception:
             pass
 
-        # Save browser state
+        # Save browser state (Okta + Appspace cookies) for future headless re-auth
         context.storage_state(path=str(STATE_FILE))
         browser.close()
 
@@ -136,10 +167,20 @@ def main():
     parser.add_argument("--headed", action="store_true", default=True,
                         help="Force visible browser (default)")
     parser.add_argument("--headless", action="store_true", help="Force headless")
+    parser.add_argument("--ci", action="store_true",
+                        help="CI mode: load Okta state from PLAYWRIGHT_AUTH_STATE env var, run headless")
     parser.add_argument("--dry-run", action="store_true", help="Don't update GitHub secrets")
     args = parser.parse_args()
 
-    headed = not args.headless
+    # CI mode: headless + load Okta browser state from env var
+    if args.ci:
+        if not load_state_from_env():
+            print("ERROR: --ci requires PLAYWRIGHT_AUTH_STATE secret to be set.")
+            print("  Run refresh_token.py locally first to seed this secret.")
+            sys.exit(1)
+        headed = False
+    else:
+        headed = not args.headless
 
     print("=" * 60)
     print("Appspace Token Refresher")
@@ -148,7 +189,11 @@ def main():
     tokens = capture_token(headed=headed)
 
     if not tokens:
-        print("\nERROR: Could not capture token. Try running with --headed")
+        print("\nERROR: Could not capture token.")
+        if args.ci:
+            print("  Okta session has likely expired — manual refresh required.")
+        else:
+            print("  Try running with --headed")
         sys.exit(1)
 
     session_token = tokens["session_token"]
@@ -156,7 +201,7 @@ def main():
     print(f"  Token length: {len(session_token)}")
 
     if args.dry_run:
-        print("\n[DRY RUN] Would update APPSPACE_SESSION_TOKEN")
+        print("\n[DRY RUN] Would update APPSPACE_SESSION_TOKEN and PLAYWRIGHT_AUTH_STATE")
         return
 
     print("\nUpdating GitHub Secrets...")
@@ -164,6 +209,9 @@ def main():
         print("  ✓ APPSPACE_SESSION_TOKEN updated")
     else:
         sys.exit(1)
+
+    # Always save Playwright browser state so CI can attempt headless re-auth next time
+    save_state_to_secret()
 
     print("\nDone! GitHub Actions should now use the fresh token.")
 
