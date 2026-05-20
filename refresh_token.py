@@ -153,10 +153,9 @@ def capture_token(headed: bool = True) -> dict | None:
 
         print("Logged in! Capturing token...")
 
-        # Navigate to trigger API calls
-        time.sleep(2)
-        page.goto(f"{APPSPACE_URL}/reservations", wait_until="networkidle")
-        time.sleep(3)
+        # Wait for post-login API calls to settle (token is set in cookies/headers)
+        time.sleep(5)
+        page.wait_for_load_state("networkidle")
 
         # Get session token from cookies (primary source)
         try:
