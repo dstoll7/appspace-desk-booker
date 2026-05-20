@@ -92,25 +92,12 @@ jobs:
             -q '.[0].number' 2>/dev/null)
 
           if [ -z "$EXISTING" ]; then
+            BODY="Token expired and headless re-auth failed (Okta session likely expired too).\n\nRun locally:\n\`\`\`\ncd ~/Documents/GitHub/appspace-desk-booker\npython refresh_token.py\n\`\`\`\nApprove the Okta push. Script updates APPSPACE_SESSION_TOKEN and PLAYWRIGHT_AUTH_STATE automatically.\n\nThis issue closes automatically once keep-alive passes."
             gh issue create \
-              --title "🔐 Appspace session token expired — manual refresh required" \
+              --title "Appspace session token expired — manual refresh required" \
               --label "token-expired" \
               --repo ${{ github.repository }} \
-              --body "$(cat <<'EOF'
-The Appspace session token has expired and automated headless re-auth also failed (Okta session has likely expired too).
-
-**Action required:** On your Mac, run:
-
-\`\`\`bash
-cd ~/Documents/GitHub/appspace-desk-booker
-python refresh_token.py
-\`\`\`
-
-Approve the Okta push notification in the browser that opens. The script will update both \`APPSPACE_SESSION_TOKEN\` and \`PLAYWRIGHT_AUTH_STATE\` in GitHub Secrets automatically.
-
-This issue will close automatically once keep-alive passes again.
-EOF
-)"
+              --body "$BODY"
           else
             echo "Issue #$EXISTING already open — skipping duplicate"
           fi
