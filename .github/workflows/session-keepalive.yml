@@ -6,7 +6,12 @@ on:
     - cron: '0 */2 * * *'
 
   workflow_dispatch:
-    inputs: {}
+    inputs:
+      reason:
+        description: 'Reason for manual trigger (optional)'
+        required: false
+        default: 'manual check'
+        type: string
 
 jobs:
   keep-alive:
