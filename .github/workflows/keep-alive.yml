@@ -1,7 +1,7 @@
 name: Keep Session Alive
 
 on:
-  # Run every 2 hours to prevent session token idle expiry
+  # Run every 2 hours to prevent idle session token expiry
   schedule:
     - cron: '0 */2 * * *'
 
