@@ -1,9 +1,10 @@
 name: Keep Session Alive
 
 on:
-  # Run every 2 hours to prevent idle session token expiry
+  # Run every hour to prevent idle session token expiry
+  # (every 2h was too infrequent — GitHub cron delays could push pings past Appspace's idle TTL)
   schedule:
-    - cron: '0 */2 * * *'
+    - cron: '0 * * * *'
 
   workflow_dispatch:
     inputs:
