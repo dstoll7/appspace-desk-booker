@@ -5,7 +5,6 @@ Automatically books desk 08W-125-G at 7 Hudson, 7 days in advance.
 
 Environment Variables Required:
   - APPSPACE_SESSION_TOKEN: Session token from Appspace
-  - APPSPACE_REFRESH_TOKEN: Refresh token (optional, for token renewal)
 """
 
 import os
@@ -443,7 +442,8 @@ def checkin_reservation(tokens):
     
     event_id = target_event.get("id")
     reservation = target_event.get("reservation", {})
-    event_status = reservation.get("status", "Unknown")
+    # API returns status in either the nested reservation object or at the top level
+    event_status = reservation.get("status") or target_event.get("status", "Unknown")
     start_at = target_event.get("startAt", "") or reservation.get("effectiveStartAt", "")
     
     print(f"\n📋 Found reservation:")

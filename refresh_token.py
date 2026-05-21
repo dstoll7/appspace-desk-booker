@@ -18,6 +18,7 @@ import os
 import subprocess
 import sys
 import time
+import urllib.request
 from pathlib import Path
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
@@ -30,7 +31,6 @@ GITHUB_REPO = "dstoll7/appspace-desk-booker"
 
 def validate_token(token: str) -> bool:
     """Confirm the token works against the Appspace API before saving it."""
-    import urllib.request
     req = urllib.request.Request(
         f"{APPSPACE_URL}/api/v3/users/me",
         headers={"Accept": "application/json", "token": token},
