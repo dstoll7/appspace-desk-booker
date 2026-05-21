@@ -419,15 +419,21 @@ def checkin_reservation(tokens):
         return False
     
     # Find the reservation for our desk
-    # API returns resources nested under event["reservation"]["resources"]
+    # API returns resources in two formats: top-level event["resources"] and nested event["reservation"]["resources"]
     target_event = None
     for event in events:
-        reservation = event.get("reservation", {})
-        resources = reservation.get("resources", [])
-        for resource in resources:
+        # Check top-level resources
+        for resource in event.get("resources", []):
             if resource.get("id") == DESK_RESOURCE_ID:
                 target_event = event
                 break
+        # Also check nested reservation.resources
+        if not target_event:
+            reservation = event.get("reservation", {})
+            for resource in reservation.get("resources", []):
+                if resource.get("id") == DESK_RESOURCE_ID:
+                    target_event = event
+                    break
         if target_event:
             break
     
