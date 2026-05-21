@@ -14,6 +14,7 @@ Usage:
 
 import argparse
 import base64
+import json
 import os
 import subprocess
 import sys
@@ -104,7 +105,24 @@ def capture_token(headed: bool = True) -> dict | None:
         browser = p.chromium.launch(headless=headless)
         context_opts = {"viewport": {"width": 1280, "height": 800}}
         if has_state:
-            context_opts["storage_state"] = str(STATE_FILE)
+            # Strip any existing Appspace session cookies from the stored state.
+            # Without this, the headless browser reuses the old (nearly-expired)
+            # session cookie and Appspace never issues a fresh one.
+            # Okta/Disney SSO cookies are preserved so SSO still completes headlessly.
+            try:
+                state = json.loads(STATE_FILE.read_text())
+                APPSPACE_COOKIE_NAMES = {"appspace-session-token", "appspace-core-token"}
+                state["cookies"] = [
+                    c for c in state.get("cookies", [])
+                    if c.get("name") not in APPSPACE_COOKIE_NAMES
+                ]
+                stripped_state_file = STATE_DIR / "auth-state-stripped.json"
+                stripped_state_file.write_text(json.dumps(state))
+                context_opts["storage_state"] = str(stripped_state_file)
+                print("Stripped old Appspace session cookies — will capture fresh token")
+            except Exception as e:
+                print(f"WARNING: Could not strip state cookies: {e} — using full state")
+                context_opts["storage_state"] = str(STATE_FILE)
 
         context = browser.new_context(**context_opts)
         page = context.new_page()
