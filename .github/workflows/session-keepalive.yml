@@ -64,7 +64,7 @@ jobs:
         id: headless-refresh
         env:
           PLAYWRIGHT_AUTH_STATE: ${{ secrets.PLAYWRIGHT_AUTH_STATE }}
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         continue-on-error: true
         run: |
           if [ -z "$PLAYWRIGHT_AUTH_STATE" ]; then
