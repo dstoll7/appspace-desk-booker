@@ -173,7 +173,14 @@ def capture_token(headed: bool = True) -> dict | None:
 
         # Wait for post-login API calls to settle (token is set in cookies/headers)
         time.sleep(5)
-        page.wait_for_load_state("networkidle")
+        try:
+            page.wait_for_load_state("networkidle", timeout=20_000)
+        except PlaywrightTimeout:
+            # networkidle timed out — page has lingering activity but we likely
+            # already captured the token from response headers or cookies.
+            print("  (networkidle timeout — continuing with token capture)")
+        except Exception:
+            pass
 
         # Get session token from cookies (primary source)
         try:
