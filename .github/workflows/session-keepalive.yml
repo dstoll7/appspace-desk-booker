@@ -24,20 +24,41 @@ jobs:
       - name: Ping Appspace API
         env:
           APPSPACE_SESSION_TOKEN: ${{ secrets.APPSPACE_SESSION_TOKEN }}
+          GH_TOKEN: ${{ secrets.GH_PAT }}
         run: |
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
+          # Capture response headers — Appspace may rotate the session token on
+          # each authenticated call via Set-Cookie. If we throw the headers away
+          # (the old -o /dev/null approach) we keep using the original token until
+          # it hits its hard ~90-min TTL, causing unnecessary full re-auths.
+          HTTP_CODE=$(curl -s -D /tmp/resp_headers.txt -o /tmp/resp_body.txt \
+            -w "%{http_code}" \
             -H "Accept: application/json" \
             -H "token: $APPSPACE_SESSION_TOKEN" \
             "https://disney.cloud.appspace.com/api/v3/users/me")
 
-          echo "API response: $STATUS"
+          echo "API response: $HTTP_CODE"
 
-          if [ "$STATUS" = "200" ]; then
+          if [ "$HTTP_CODE" = "200" ]; then
             echo "✓ Session is alive"
+
+            # Check if Appspace issued a rotated token in the response
+            NEW_TOKEN=$(grep -i "set-cookie.*appspace-session-token=" /tmp/resp_headers.txt 2>/dev/null \
+              | sed 's/.*appspace-session-token=\([^;[:space:]]*\).*/\1/' \
+              | tr -d '\r\n' | head -1)
+
+            if [ -n "$NEW_TOKEN" ] && [ "$NEW_TOKEN" != "$APPSPACE_SESSION_TOKEN" ]; then
+              echo "🔄 Token was rotated in response — updating secret to stay ahead of expiry"
+              echo "$NEW_TOKEN" | gh secret set APPSPACE_SESSION_TOKEN \
+                --repo ${{ github.repository }}
+              echo "  ✓ APPSPACE_SESSION_TOKEN updated with rotated token"
+            else
+              echo "  (no token rotation in response headers)"
+            fi
+
             exit 0
           fi
 
-          echo "❌ Session is dead (HTTP $STATUS)"
+          echo "❌ Session is dead (HTTP $HTTP_CODE)"
           exit 1
 
   # When the token is dead, attempt headless Playwright re-auth using stored Okta cookies.
