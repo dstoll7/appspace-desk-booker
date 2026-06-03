@@ -98,6 +98,29 @@ jobs:
           fi
           python refresh_token.py --ci
 
+      - name: Close token-expired issue if headless refresh succeeded
+        if: steps.headless-refresh.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # CI self-healed the token headlessly — no manual intervention needed.
+          # Close any open token-expired issue so the local monitor stays quiet.
+          EXISTING=$(gh issue list \
+            --label "token-expired" \
+            --state open \
+            --json number \
+            --repo ${{ github.repository }} \
+            -q '.[0].number' 2>/dev/null)
+
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" \
+              --repo ${{ github.repository }} \
+              --comment "✅ CI headless re-auth succeeded — token healed automatically. Closing."
+            echo "Closed issue #$EXISTING"
+          else
+            echo "No open token-expired issue — nothing to close"
+          fi
+
       - name: Create GitHub Issue if headless refresh also failed
         if: steps.headless-refresh.outcome == 'failure'
         env:
@@ -117,7 +140,7 @@ jobs:
             -q '.[0].number' 2>/dev/null)
 
           if [ -z "$EXISTING" ]; then
-            BODY="Token expired and headless re-auth failed (Okta session likely expired too).\n\nRun locally:\n\`\`\`\ncd ~/Documents/GitHub/appspace-desk-booker\npython refresh_token.py\n\`\`\`\nApprove the Okta push. Script updates APPSPACE_SESSION_TOKEN and PLAYWRIGHT_AUTH_STATE automatically.\n\nThis issue closes automatically once keep-alive passes."
+            BODY="Token expired and headless CI re-auth failed (Okta session in PLAYWRIGHT_AUTH_STATE has expired too).\n\nThis is the ONLY case that needs you — run locally:\n\`\`\`\ncd ~/Documents/GitHub/appspace-desk-booker\npython refresh_token.py\n\`\`\`\nApprove the Okta push. The script updates APPSPACE_SESSION_TOKEN and re-seeds PLAYWRIGHT_AUTH_STATE so future CI re-auth works headlessly again.\n\nThis issue closes automatically once CI headless re-auth succeeds."
             gh issue create \
               --title "Appspace session token expired — manual refresh required" \
               --label "token-expired" \
