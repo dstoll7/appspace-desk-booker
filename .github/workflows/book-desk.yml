@@ -66,11 +66,16 @@ jobs:
           if [ -n "${{ inputs.start_time }}" ]; then ARGS="$ARGS --start-time ${{ inputs.start_time }}"; fi
           if [ -n "${{ inputs.end_time }}" ]; then ARGS="$ARGS --end-time ${{ inputs.end_time }}"; fi
           if [ "${{ inputs.force }}" = "true" ]; then ARGS="$ARGS --force"; fi
+          set +e
           python book_desk.py $ARGS
+          CODE=$?
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          exit $CODE
 
       # Exit code 2 from book_desk.py == auth failure (refresh token expired/revoked).
+      # Other failures (e.g. someone else grabbed the desk) must NOT open a reauth issue.
       - name: Alert if refresh token expired
-        if: failure() && steps.book.outcome == 'failure'
+        if: always() && steps.book.outputs.code == '2'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |

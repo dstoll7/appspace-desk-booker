@@ -51,11 +51,17 @@ jobs:
         id: checkin
         env:
           APPSPACE_REFRESH_TOKEN: ${{ secrets.APPSPACE_REFRESH_TOKEN }}
-        run: python book_desk.py --checkin
+        run: |
+          set +e
+          python book_desk.py --checkin
+          CODE=$?
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          exit $CODE
 
       # Exit code 2 from book_desk.py == auth failure (refresh token expired/revoked).
+      # Other failures (e.g. past-window 500) must NOT open a reauth issue.
       - name: Alert if refresh token expired
-        if: failure() && steps.checkin.outcome == 'failure'
+        if: always() && steps.checkin.outputs.code == '2'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
