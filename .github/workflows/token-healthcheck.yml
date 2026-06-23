@@ -10,6 +10,10 @@ on:
   schedule:
     - cron: '0 16 * * *'  # 11:00 AM EST (Nov-Mar)
     - cron: '0 15 * * *'  # 11:00 AM EDT (Mar-Nov)
+    # TEMPORARY (remove after lifetime test 2026-06-23): poll every 15 min to
+    # measure the real refresh-token lifetime and test whether frequent grants
+    # keep it alive (grant-based keep-alive prototype).
+    - cron: '*/15 * * * *'
 
   workflow_dispatch:
     inputs:
