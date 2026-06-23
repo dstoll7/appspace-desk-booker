@@ -250,6 +250,18 @@ def main():
         print("\n[DRY RUN] Would update APPSPACE_SESSION_TOKEN and PLAYWRIGHT_AUTH_STATE")
         return
 
+    # In a GitHub Actions job, export the fresh token to the job environment so the
+    # very next step (book / check-in) uses this seconds-old token directly —
+    # no round-trip through the secret, which wouldn't be re-injected mid-job anyway.
+    github_env = os.environ.get("GITHUB_ENV")
+    if github_env:
+        try:
+            with open(github_env, "a") as fh:
+                fh.write(f"APPSPACE_SESSION_TOKEN={session_token}\n")
+            print("  ✓ Exported APPSPACE_SESSION_TOKEN to job environment (GITHUB_ENV)")
+        except Exception as e:
+            print(f"  WARNING: Could not write to GITHUB_ENV: {e}")
+
     print("\nUpdating GitHub Secrets...")
     if update_github_secret("APPSPACE_SESSION_TOKEN", session_token):
         print("  ✓ APPSPACE_SESSION_TOKEN updated")

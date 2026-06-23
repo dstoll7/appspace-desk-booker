@@ -12,20 +12,22 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 PYTHON="$SCRIPT_DIR/.venv/bin/python3"
 LOCKFILE="/tmp/.appspace-refresh-running"
 
-# Check last keep-alive run status
-LAST_STATUS=$(gh run list --workflow="keep-alive.yml" --repo "$REPO" --limit 1 --json conclusion -q '.[0].conclusion' 2>/dev/null)
+# There is no keep-alive workflow anymore. Tokens are minted on-demand by the
+# booking/check-in workflows. The local machine only needs to act in ONE case:
+# when a headless mint failed because the Okta session in PLAYWRIGHT_AUTH_STATE
+# expired — CI signals that by opening a GitHub Issue labeled "token-expired".
+OPEN_ISSUE=$(gh issue list --label "token-expired" --state open \
+  --repo "$REPO" --json number -q '.[0].number' 2>/dev/null)
 
-if [ "$LAST_STATUS" = "success" ]; then
-    # All good - clean up any stale lock
-    rm -f "$LOCKFILE"
+if [ $? -ne 0 ]; then
+    echo "Could not query GitHub issues — skipping to avoid false positive"
     exit 0
 fi
 
-# Double-check by hitting the API directly (in case GH Actions has a delay)
-TOKEN=$(gh secret list --repo "$REPO" 2>/dev/null | grep -c APPSPACE_SESSION_TOKEN)
-if [ "$TOKEN" -eq 0 ]; then
-    osascript -e 'display notification "No APPSPACE_SESSION_TOKEN secret found" with title "Appspace Monitor Error"'
-    exit 1
+if [ -z "$OPEN_ISSUE" ]; then
+    # No open issue — CI is minting tokens fine. Nothing to do.
+    rm -f "$LOCKFILE"
+    exit 0
 fi
 
 # Don't run if already refreshing

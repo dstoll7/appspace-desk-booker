@@ -21,6 +21,14 @@ import requests
 BASE_URL = "https://disney.cloud.appspace.com/api/v3"
 TIMEZONE = "America/New_York"
 
+
+class TokenExpiredError(Exception):
+    """Raised when the Appspace API rejects the token (401).
+
+    This exists so a dead token surfaces as an explicit auth failure instead of
+    being silently swallowed and misreported as "no reservation found".
+    """
+
 # User details
 USER_ID = "0b7f4f61-7d08-4d14-b748-10359ab2bcf5"
 USER_NAME = "Daniel Stoll"
@@ -326,10 +334,13 @@ def check_existing_reservations(tokens):
             timeout=30,
         )
         
+        if response.status_code == 401:
+            raise TokenExpiredError("401 from /reservation/users/me/events")
+
         if response.status_code == 200:
             data = response.json()
             items = data.get("items", [])
-            
+
             for item in items:
                 # Check resources at top level
                 resources = item.get("resources", [])
@@ -337,7 +348,7 @@ def check_existing_reservations(tokens):
                     if resource.get("id") == DESK_RESOURCE_ID:
                         print(f"⚠️  Already have a reservation for {DESK_NAME} on {booking_date}")
                         return True
-                
+
                 # Also check nested reservation.resources (API returns both formats)
                 reservation = item.get("reservation", {})
                 res_resources = reservation.get("resources", [])
@@ -345,9 +356,11 @@ def check_existing_reservations(tokens):
                     if resource.get("id") == DESK_RESOURCE_ID:
                         print(f"⚠️  Already have a reservation for {DESK_NAME} on {booking_date}")
                         return True
+    except TokenExpiredError:
+        raise
     except Exception as e:
         print(f"⚠ Could not check existing reservations: {e}")
-    
+
     return False
 
 
@@ -396,13 +409,60 @@ def get_todays_events(tokens):
             timeout=30,
         )
         
+        if response.status_code == 401:
+            raise TokenExpiredError("401 from /reservation/users/me/events")
+
         if response.status_code == 200:
             data = response.json()
             return data.get("items", [])
+    except TokenExpiredError:
+        raise
     except Exception as e:
         print(f"⚠ Could not get today's events: {e}")
-    
+
     return []
+
+
+def wait_for_checkin_window():
+    """Sleep until the check-in window opens — WITHOUT needing a token.
+
+    Appspace's check-in window is 15 min before to 15 min after the booked start
+    time. The check-in workflow is scheduled early (8 AM ET) to absorb GitHub's
+    cron delays, so this runs first to burn the slack, and the fresh token is
+    minted only AFTER it returns — guaranteeing the token is seconds old when we
+    actually check in (it has a ~90-min TTL, so minting before this wait would
+    let it die mid-sleep).
+    """
+    eastern = ZoneInfo(TIMEZONE)
+    start_hour, start_minute, _, _ = get_booking_times()
+
+    now = datetime.now(eastern)
+    today = now.date()
+    start_dt = datetime(
+        today.year, today.month, today.day,
+        start_hour, start_minute, 0, tzinfo=eastern,
+    )
+    window_start = start_dt - timedelta(minutes=15)
+    window_end = start_dt + timedelta(minutes=15)
+
+    print(f"   Booked start: {start_dt.strftime('%I:%M %p ET')}")
+    print(f"   Check-in window: {window_start.strftime('%I:%M %p')} - {window_end.strftime('%I:%M %p ET')}")
+    print(f"   Current time: {now.strftime('%I:%M %p ET')}")
+
+    if now < window_start:
+        # Wake up ~30s before the window opens so the token mint that follows
+        # lands us right at window open with a brand-new token.
+        wait_seconds = max(0, (window_start - now).total_seconds() - 30)
+        print(f"\n⏳ Window opens in {int((window_start - now).total_seconds() / 60)} min — "
+              f"sleeping {int(wait_seconds)}s, then minting a fresh token")
+        time.sleep(wait_seconds)
+        print(f"   Resumed at {datetime.now(eastern).strftime('%I:%M %p ET')}")
+    elif now > window_end:
+        late_min = int((now - window_end).total_seconds() / 60)
+        print(f"\n⚠️  Cron fired {late_min} min after the window closed — "
+              f"proceeding anyway (check-in will likely be rejected by Appspace)")
+    else:
+        print("\n✓ Already inside the check-in window — proceeding to mint token")
 
 
 def checkin_reservation(tokens):
@@ -535,10 +595,21 @@ def checkin_reservation(tokens):
 def main():
     """Main entry point."""
     eastern = ZoneInfo(TIMEZONE)
-    
-    # Check for --checkin flag
+
+    # Check for flags
     do_checkin = "--checkin" in sys.argv
-    
+    do_wait = "--wait-for-checkin-window" in sys.argv
+
+    # Token-free mode: just sleep until the check-in window opens, then exit.
+    # The workflow mints the fresh token AFTER this returns.
+    if do_wait:
+        print("=" * 60)
+        print("⏳ Waiting for check-in window (no token needed)")
+        print(f"   {datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print("=" * 60)
+        wait_for_checkin_window()
+        return
+
     print("=" * 60)
     if do_checkin:
         print("🏢 Appspace Desk Check-In (GitHub Actions)")
@@ -546,40 +617,48 @@ def main():
         print("🏢 Appspace Desk Auto-Booker (GitHub Actions)")
     print(f"   {datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print("=" * 60)
-    
+
     # Load tokens from environment
     tokens = get_tokens()
     print("\n✓ Token loaded from environment")
-    
-    if do_checkin:
-        # Check-in mode
-        result = checkin_reservation(tokens)
-        if result:
-            print(f"\n🎉 Checked in successfully!")
+
+    try:
+        if do_checkin:
+            # Check-in mode
+            result = checkin_reservation(tokens)
+            if result:
+                print(f"\n🎉 Checked in successfully!")
+            else:
+                print(f"\n😞 Check-in failed")
+                sys.exit(1)
         else:
-            print(f"\n😞 Check-in failed")
-            sys.exit(1)
-    else:
-        # Booking mode
-        # Check for existing reservation (unless --force is set)
-        if should_force():
-            print("\n⚡ Force mode - skipping existing reservation check")
-        else:
-            print("\n🔍 Checking for existing reservations...")
-            if check_existing_reservations(tokens):
-                print("   Skipping - reservation already exists")
-                print("   Use --force to attempt booking anyway")
-                return
-            print("   No existing reservation found")
-        
-        # Create the reservation
-        success = create_reservation(tokens)
-        
-        if success:
-            print(f"\n🎉 Done!")
-        else:
-            print(f"\n😞 Failed to book desk {DESK_NAME}")
-            sys.exit(1)
+            # Booking mode
+            # Check for existing reservation (unless --force is set)
+            if should_force():
+                print("\n⚡ Force mode - skipping existing reservation check")
+            else:
+                print("\n🔍 Checking for existing reservations...")
+                if check_existing_reservations(tokens):
+                    print("   Skipping - reservation already exists")
+                    print("   Use --force to attempt booking anyway")
+                    return
+                print("   No existing reservation found")
+
+            # Create the reservation
+            success = create_reservation(tokens)
+
+            if success:
+                print(f"\n🎉 Done!")
+            else:
+                print(f"\n😞 Failed to book desk {DESK_NAME}")
+                sys.exit(1)
+    except TokenExpiredError:
+        # The token was dead — make this loud and unambiguous instead of letting
+        # it masquerade as "no reservation found".
+        print("\n❌ TOKEN EXPIRED: Appspace rejected the session token (401).")
+        print("   The on-demand token mint must have failed or the token died.")
+        print("   This is an auth failure, NOT a missing reservation.")
+        sys.exit(2)
 
 
 if __name__ == "__main__":
