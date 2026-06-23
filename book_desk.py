@@ -652,6 +652,7 @@ def main():
     # Check for flags
     do_checkin = "--checkin" in sys.argv
     do_wait = "--wait-for-checkin-window" in sys.argv
+    do_healthcheck = "--healthcheck" in sys.argv
 
     # Token-free mode: just sleep until the check-in window opens, then exit.
     # The workflow mints the fresh token AFTER this returns.
@@ -662,6 +663,29 @@ def main():
         print("=" * 60)
         wait_for_checkin_window()
         return
+
+    # Health-check mode: mint a session token from the refresh token and validate
+    # it against the API. Exit 0 if healthy, exit 2 if the refresh token is dead.
+    if do_healthcheck:
+        print("=" * 60)
+        print("🩺 Appspace refresh-token health check")
+        print(f"   {datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')}")
+        print("=" * 60)
+        try:
+            tokens = get_tokens()
+            resp = requests.get(
+                f"{BASE_URL}/users/me",
+                headers={"Accept": "application/json", "token": tokens["session_token"]},
+                timeout=15,
+            )
+            if resp.status_code != 200:
+                raise TokenExpiredError(f"/users/me returned HTTP {resp.status_code}")
+            print("\n✅ HEALTHY: refresh token works — session token minted and validated.")
+            return
+        except TokenExpiredError as e:
+            print(f"\n❌ AUTH FAILURE: {e}")
+            print("   The refresh token is expired/revoked — run refresh_token.py locally.")
+            sys.exit(2)
 
     print("=" * 60)
     if do_checkin:

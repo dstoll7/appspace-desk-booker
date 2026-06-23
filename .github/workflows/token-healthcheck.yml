@@ -1,0 +1,85 @@
+name: Token Health Check
+
+on:
+  # Daily at 11:00 AM ET. Actively mints a session token from the refresh token
+  # and validates it — so an expired/revoked refresh token is caught proactively
+  # (every day, including weekends), not just when a Mon-Thu booking/check-in
+  # happens to fail. Runs inside GitHub Actions, which (unlike the claude.ai cloud
+  # routine sandbox) can reach both the Appspace API and the refresh-token secret.
+  # Two entries to handle DST:
+  schedule:
+    - cron: '0 16 * * *'  # 11:00 AM EST (Nov-Mar)
+    - cron: '0 15 * * *'  # 11:00 AM EDT (Mar-Nov)
+
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: 'Reason for manual trigger (optional)'
+        required: false
+        default: 'manual health check'
+        type: string
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
+jobs:
+  healthcheck:
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4.3.1
+
+      - name: Set up Python
+        uses: actions/setup-python@v5.6.0
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install requests
+
+      - name: Check token health
+        id: check
+        env:
+          APPSPACE_REFRESH_TOKEN: ${{ secrets.APPSPACE_REFRESH_TOKEN }}
+        run: |
+          set +e
+          python book_desk.py --healthcheck
+          CODE=$?
+          echo "code=$CODE" >> "$GITHUB_OUTPUT"
+          exit $CODE
+
+      # Exit code 2 == refresh token expired/revoked. Open a reminder issue.
+      - name: Open reauth issue if token is dead
+        if: always() && steps.check.outputs.code == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh label create "token-expired" --color "B60205" \
+            --description "Appspace refresh token expired — yearly re-auth needed" \
+            --repo ${{ github.repository }} 2>/dev/null || true
+          EXISTING=$(gh issue list --label "token-expired" --state open \
+            --json number --repo ${{ github.repository }} -q '.[0].number' 2>/dev/null)
+          if [ -z "$EXISTING" ]; then
+            BODY="The daily health check could not mint a session token — the refresh token expired or was revoked (it lasts ~365 days).\n\nRun once locally to mint a new one:\n\`\`\`\ncd ~/Documents/GitHub/appspace-desk-booker\npython refresh_token.py\n\`\`\`\nApprove the Okta push. The script stores a fresh APPSPACE_REFRESH_TOKEN and everything is unattended again for another year. This issue closes automatically on the next healthy check."
+            gh issue create \
+              --title "Appspace refresh token expired — yearly re-auth required" \
+              --label "token-expired" --repo ${{ github.repository }} --body "$BODY"
+          fi
+
+      # Healthy: close any stale reauth issue (e.g. after you re-authed locally).
+      - name: Close stale reauth issue if healthy
+        if: steps.check.outputs.code == '0'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          EXISTING=$(gh issue list --label "token-expired" --state open \
+            --json number --repo ${{ github.repository }} -q '.[0].number' 2>/dev/null)
+          if [ -n "$EXISTING" ]; then
+            gh issue close "$EXISTING" --repo ${{ github.repository }} \
+              --comment "✅ Token health check passed — refresh token healthy again. Closing."
+          fi
