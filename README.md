@@ -1,6 +1,8 @@
 # Appspace Desk Auto-Booker 🏢
 
-Automatically books desk **08W-125-G** at 7 Hudson, 7 days in advance using GitHub Actions.
+Automatically books desk **08W-125-G** at 7 Hudson, 7 days in advance, and checks
+in each morning — **fully unattended** via GitHub Actions. No browser, no daily
+logins, no laptop required.
 
 ## Configuration
 
@@ -14,118 +16,99 @@ Automatically books desk **08W-125-G** at 7 Hudson, 7 days in advance using GitH
 
 | Workflow | Schedule | Purpose |
 |----------|----------|---------|
-| **Book Desk Daily** | 11:00 PM ET (Mon-Thu) | Books desk 7 days in advance (runs night before to beat other bookers) |
-| **Check In to Desk** | 8:00 AM ET (Mon-Thu) | Waits for the 9:15-9:45 AM check-in window, then checks in |
+| **Book Desk Daily** | 11:00 PM ET (Mon-Thu) | Books the desk 7 days out |
+| **Check In to Desk** | 8:00 AM ET (Mon-Thu) | Waits for the 9:15-9:45 AM window, then checks in |
 
-There is **no keep-alive workflow**. The Appspace session token has a short
-(~90-min) TTL and pinging it does not extend it, so instead of trying to keep a
-token warm 24/7, each workflow **mints a fresh token on-demand** (headless Okta
-re-auth via Playwright) immediately before it books or checks in. The token is
-only ever seconds old when used.
+## How authentication works (the important part)
+
+Appspace session tokens are short-lived and can **only** be minted interactively
+through Disney's Okta SSO — there is no headless/automated browser path (Okta
+blocks it). So keeping a session token alive in the cloud is impossible.
+
+Instead, this project uses Appspace's **refresh token**:
+
+- A one-time local login (`refresh_token.py`) captures a **refresh token** that
+  is valid for **~365 days** and is **non-rotating**.
+- It's stored as the `APPSPACE_REFRESH_TOKEN` GitHub Secret.
+- Every workflow run mints a fresh short-lived session token from it with a
+  single plain-HTTP call (`POST /api/v3/authorization/token`,
+  `grantType: refreshToken`) — **no browser, no Okta, no interaction.**
+
+Result: the system runs hands-off for ~a year. You only re-authenticate when the
+refresh token finally expires or is revoked.
 
 ## Setup
 
-### 1. Required Secrets
-
-Go to **Settings → Secrets and variables → Actions** and add:
-
-| Secret Name | Description | How to Get |
-|-------------|-------------|------------|
-| `APPSPACE_SESSION_TOKEN` | Latest session token (fallback / inspection) | Auto-managed by `refresh_token.py` |
-| `PLAYWRIGHT_AUTH_STATE` | Stored Okta browser session for headless mints | Auto-seeded by `refresh_token.py` |
-| `GH_PAT` | PAT with `secrets` write, so CI can update the secrets above | Create a fine-grained PAT |
-
-### 2. Getting Your Tokens
-
-Run the refresher once locally — it captures the token **and** seeds
-`PLAYWRIGHT_AUTH_STATE` so CI can mint headlessly afterward:
+### 1. Seed the refresh token (once, locally)
 
 ```
 python refresh_token.py
 ```
 
-Complete the Disney SSO / Okta push in the browser window that opens. The script
-validates the token, then writes both `APPSPACE_SESSION_TOKEN` and
-`PLAYWRIGHT_AUTH_STATE` to GitHub Secrets.
+Complete the Disney/Okta login in the window that opens. The script captures the
+refresh token, validates it, and stores it as the `APPSPACE_REFRESH_TOKEN`
+secret. That's it — booking and check-in now run automatically.
 
-### 3. Manual Run
+### 2. Secret
 
-You can trigger the workflow manually:
-1. Go to **Actions** tab
-2. Select "Book Desk Daily"
-3. Click "Run workflow"
+| Secret | Description |
+|--------|-------------|
+| `APPSPACE_REFRESH_TOKEN` | Long-lived (~365-day) refresh token. Set by `refresh_token.py`. |
+
+(`GITHUB_TOKEN` is provided automatically and is used only to open a reminder
+issue if the refresh token ever expires.)
+
+### 3. Manual run
+
+Actions tab → select a workflow → **Run workflow**.
 
 ## How It Works
 
 **Booking (11:00 PM ET, Mon-Thu)**
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  1. Mint a fresh token (headless Okta re-auth)              │
-│  2. Check if YOU already have desk booked for target date   │
-│  3. Lock the desk resource                                  │
-│  4. Create reservation 7 days out                           │
-│  5. On 409 conflict, VERIFY you have the desk (fail if not) │
-└─────────────────────────────────────────────────────────────┘
+1. Mint a fresh session token from the refresh token (plain HTTP)
+2. Skip if you already have the desk for the target date
+3. Lock the resource and create the reservation 7 days out
+4. On 409, verify YOU hold the desk (fail if someone else does)
 ```
 
 **Check-in (8:00 AM ET, Mon-Thu)**
 ```
-┌─────────────────────────────────────────────────────────────┐
-│  1. Sleep until the 9:15 AM window opens (no token needed)  │
-│     — absorbs GitHub's cron delay (often 30-60+ min late)   │
-│  2. Mint a fresh token (so it's seconds old in the window)  │
-│  3. Find today's reservation and check in                  │
-└─────────────────────────────────────────────────────────────┘
+1. Sleep until the 9:15 AM window opens (absorbs GitHub's cron delay; no token needed)
+2. Mint a fresh session token from the refresh token
+3. Find today's reservation and check in
 ```
-
-### Token lifecycle
-
-The only thing that needs occasional manual attention is the **Okta session**
-stored in `PLAYWRIGHT_AUTH_STATE`. Each successful headless mint re-seeds it, so
-it stays warm — but SSO has a hard max age. When it finally expires, the next
-booking/check-in opens a GitHub Issue labeled `token-expired`, and the local
-monitor prompts you to run `python refresh_token.py` once and approve the Okta
-push. That issue auto-closes on the next successful mint.
 
 ## Troubleshooting
 
-### Token Expired (401 Error)
-1. Log into Appspace in your browser
-2. Get a fresh token from DevTools
-3. Update `APPSPACE_SESSION_TOKEN` in GitHub Secrets
+### `token-expired` issue appears / "AUTH FAILURE" in logs
+The refresh token expired (~yearly) or was revoked. Run `python refresh_token.py`
+locally once and approve the Okta push. The issue resolves on the next run.
 
-### Desk Already Booked (409 Conflict)
-The script will verify if YOU have the reservation:
-- If you have it: Success ✅
-- If someone else has it: Failure ❌ (consider running earlier)
+### Check-in failed
+- The job waits for the 9:15-9:45 AM window, tolerating cron delays up to ~75 min.
+- If GitHub delays the run past ~9:45 AM ET, the window is closed and Appspace
+  rejects the check-in — re-run the workflow manually that day.
 
-### Check-In Failed
-- The check-in job is scheduled at 8:00 AM ET and sleeps until the 9:15-9:45 AM
-  ET window before checking in, so it tolerates GitHub cron delays up to ~75 min.
-- If the job logs `TOKEN EXPIRED`, the on-demand mint failed — see the
-  `token-expired` issue and run `python refresh_token.py` locally.
-- If GitHub delays the run past ~9:45 AM ET, the window is already closed and
-  Appspace will reject the check-in; re-run the workflow manually if needed.
-
-### Workflow Not Running
-- Check that Actions are enabled for the repository
-- Verify the cron schedule is correct
-- Check the Actions tab for any errors
+### Desk already booked (409)
+The script verifies whether *you* hold the reservation — success if yes, failure
+(someone else grabbed it) if no.
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `book_desk.py` | Main booking script |
-| `.github/workflows/book-desk.yml` | GitHub Actions workflow |
-| `README.md` | This file |
+| `book_desk.py` | Booking + check-in; mints session tokens from the refresh token |
+| `refresh_token.py` | One-time/yearly local tool to capture & store the refresh token |
+| `.github/workflows/book-desk.yml` | Nightly booking workflow |
+| `.github/workflows/checkin-desk.yml` | Morning check-in workflow |
 
 ## API Endpoints Used
 
 | Endpoint | Method | Purpose |
 |----------|--------|---------|
-| `/api/v3/authorization/token` | POST | Refresh tokens |
-| `/api/v3/reservation/users/me/events` | GET | Check existing bookings |
+| `/api/v3/authorization/token` | POST | Mint session token from refresh token |
+| `/api/v3/reservation/users/me/events` | GET | Check existing bookings / find today's event |
 | `/api/v3/reservation/locks/resources` | POST | Lock desk |
 | `/api/v3/reservation/reservations` | POST | Create reservation |
-
+| `/api/v3/reservation/events/{id}/checkin` | POST | Check in |

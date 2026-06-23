@@ -3,10 +3,15 @@
 Appspace Desk Auto-Booker (GitHub Actions version)
 Automatically books desk 08W-125-G at 7 Hudson, 7 days in advance.
 
-Environment Variables Required:
-  - APPSPACE_SESSION_TOKEN: Session token from Appspace
+Environment Variables (one of):
+  - APPSPACE_REFRESH_TOKEN: Long-lived (365-day) refresh token. Preferred —
+    a fresh session token is minted from it on every run via plain HTTP, so the
+    whole thing runs unattended in CI with no browser/Okta/manual login.
+  - APPSPACE_SESSION_TOKEN: A pre-minted session token (fallback for local runs).
 """
 
+import base64
+import json
 import os
 import sys
 import time
@@ -91,17 +96,65 @@ def should_force():
 # TOKEN MANAGEMENT
 # =============================================================================
 
-def get_tokens():
-    """Get tokens from environment variables."""
-    session_token = os.environ.get("APPSPACE_SESSION_TOKEN")
+SUBJECT_TYPE = "UserStreaming"
 
-    if not session_token:
-        print("ERROR: APPSPACE_SESSION_TOKEN environment variable not set")
-        sys.exit(1)
 
-    return {
-        "session_token": session_token,
+def mint_session_token(refresh_token):
+    """Exchange the long-lived refresh token for a fresh session token.
+
+    Pure HTTP — no browser, no Okta, no manual login. The Appspace API uses the
+    session token (the JWT's `sourceId` claim) as the `token:` header value.
+    The refresh token is non-rotating and valid for ~365 days.
+    """
+    payload = {
+        "subjectId": USER_ID,
+        "subjectType": SUBJECT_TYPE,
+        "grantType": "refreshToken",
+        "refreshToken": refresh_token,
     }
+    resp = requests.post(
+        f"{BASE_URL}/authorization/token",
+        headers={
+            "Content-Type": "application/json;charset=UTF-8",
+            "Accept": "application/json, text/plain, */*",
+        },
+        json=payload,
+        timeout=30,
+    )
+    if resp.status_code != 200:
+        raise TokenExpiredError(
+            f"Refresh-token grant failed (HTTP {resp.status_code}). "
+            f"The refresh token may be expired or revoked — run refresh_token.py "
+            f"locally to mint a new one."
+        )
+
+    access_token = resp.json().get("accessToken", "")
+    parts = access_token.split(".")
+    if len(parts) < 2:
+        raise TokenExpiredError("Refresh grant returned no usable accessToken JWT")
+    claims = json.loads(base64.urlsafe_b64decode(parts[1] + "=" * (-len(parts[1]) % 4)))
+    session_token = claims.get("sourceId")
+    if not session_token:
+        raise TokenExpiredError("Could not extract session token (sourceId) from JWT")
+    return session_token
+
+
+def get_tokens():
+    """Get a session token — minted fresh from the refresh token when available."""
+    refresh_token = os.environ.get("APPSPACE_REFRESH_TOKEN")
+    if refresh_token:
+        print("🔑 Minting fresh session token from refresh token (no browser)...")
+        session_token = mint_session_token(refresh_token)
+        print(f"   ✓ Session token minted: {session_token[:8]}...{session_token[-4:]}")
+        return {"session_token": session_token}
+
+    # Fallback: a pre-minted session token (e.g. local one-off runs)
+    session_token = os.environ.get("APPSPACE_SESSION_TOKEN")
+    if not session_token:
+        print("ERROR: set APPSPACE_REFRESH_TOKEN (preferred) or APPSPACE_SESSION_TOKEN")
+        sys.exit(1)
+    print("⚠ Using pre-set APPSPACE_SESSION_TOKEN (no refresh token available)")
+    return {"session_token": session_token}
 
 
 # =============================================================================
@@ -618,11 +671,12 @@ def main():
     print(f"   {datetime.now(eastern).strftime('%Y-%m-%d %H:%M:%S %Z')}")
     print("=" * 60)
 
-    # Load tokens from environment
-    tokens = get_tokens()
-    print("\n✓ Token loaded from environment")
-
     try:
+        # Mint / load the session token (raises TokenExpiredError if the
+        # refresh token is dead).
+        tokens = get_tokens()
+        print("\n✓ Session token ready")
+
         if do_checkin:
             # Check-in mode
             result = checkin_reservation(tokens)
@@ -652,12 +706,12 @@ def main():
             else:
                 print(f"\n😞 Failed to book desk {DESK_NAME}")
                 sys.exit(1)
-    except TokenExpiredError:
-        # The token was dead — make this loud and unambiguous instead of letting
-        # it masquerade as "no reservation found".
-        print("\n❌ TOKEN EXPIRED: Appspace rejected the session token (401).")
-        print("   The on-demand token mint must have failed or the token died.")
-        print("   This is an auth failure, NOT a missing reservation.")
+    except TokenExpiredError as e:
+        # Auth failed — make it loud and unambiguous instead of letting it
+        # masquerade as "no reservation found".
+        print(f"\n❌ AUTH FAILURE: {e}")
+        print("   The refresh token is likely expired/revoked (it lasts ~365 days).")
+        print("   Fix: run `python refresh_token.py` locally once to mint a new one.")
         sys.exit(2)
 
 

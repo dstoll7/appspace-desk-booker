@@ -1,12 +1,11 @@
 name: Check In to Desk
 
 on:
-  # Scheduled EARLY (8:00 AM ET) on purpose. GitHub's scheduled cron is routinely
-  # 30-60+ min late, and the Appspace check-in window is only 9:15-9:45 AM ET.
-  # Firing at 8 AM gives ~75 min of slack: the job first sleeps until the window
-  # opens (book_desk.py --wait-for-checkin-window), THEN mints a fresh token, THEN
-  # checks in — so even a badly delayed run still lands inside the window with a
-  # token that is seconds old (tokens have a ~90-min TTL).
+  # Scheduled EARLY (8:00 AM ET). GitHub's scheduled cron is routinely 30-60+ min
+  # late, and the Appspace check-in window is only 9:15-9:45 AM ET. The job first
+  # waits for the window to open, then checks in — so even a delayed run lands
+  # inside the window. Fully unattended: a fresh session token is minted from the
+  # long-lived refresh token over plain HTTP (no browser/Okta/login).
   # Two entries to handle DST:
   #   EST (Nov-Mar): 8:00 AM ET = 13:00 UTC
   #   EDT (Mar-Nov): 8:00 AM ET = 12:00 UTC
@@ -43,64 +42,34 @@ jobs:
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
-          pip install requests playwright
-          playwright install chromium --with-deps
+          pip install requests
 
-      # Burn GitHub's cron slack BEFORE minting the token, so the token is fresh
-      # when we actually check in. No token needed for this step.
       - name: Wait for check-in window
         run: python book_desk.py --wait-for-checkin-window
 
-      # Mint a brand-new token right before check-in (headless re-auth via the
-      # stored Okta session). Exports it to GITHUB_ENV for the check-in step.
-      - name: Mint fresh Appspace token
-        id: mint
-        continue-on-error: true
+      - name: Check in to desk
+        id: checkin
         env:
-          PLAYWRIGHT_AUTH_STATE: ${{ secrets.PLAYWRIGHT_AUTH_STATE }}
-          GH_TOKEN: ${{ secrets.GH_PAT }}
-        run: |
-          if [ -z "$PLAYWRIGHT_AUTH_STATE" ]; then
-            echo "No PLAYWRIGHT_AUTH_STATE secret — run refresh_token.py locally to seed it."
-            exit 1
-          fi
-          python refresh_token.py --ci
+          APPSPACE_REFRESH_TOKEN: ${{ secrets.APPSPACE_REFRESH_TOKEN }}
+        run: python book_desk.py --checkin
 
-      - name: Alert if token mint failed (Okta session expired)
-        if: steps.mint.outcome == 'failure'
+      # Exit code 2 from book_desk.py == auth failure (refresh token expired/revoked).
+      - name: Alert if refresh token expired
+        if: failure() && steps.checkin.outcome == 'failure'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           gh label create "token-expired" --color "B60205" \
-            --description "Appspace session token has expired, manual refresh needed" \
+            --description "Appspace refresh token expired — yearly re-auth needed" \
             --repo ${{ github.repository }} 2>/dev/null || true
           EXISTING=$(gh issue list --label "token-expired" --state open \
             --json number --repo ${{ github.repository }} -q '.[0].number' 2>/dev/null)
           if [ -z "$EXISTING" ]; then
-            BODY="On-demand token mint failed during check-in — the Okta session in PLAYWRIGHT_AUTH_STATE has expired.\n\nRun locally to heal it:\n\`\`\`\ncd ~/Documents/GitHub/appspace-desk-booker\npython refresh_token.py\n\`\`\`\nApprove the Okta push. This re-seeds PLAYWRIGHT_AUTH_STATE so future headless mints work again.\n\nThis issue closes automatically once a mint succeeds."
+            BODY="Check-in failed. If the log shows AUTH FAILURE, the refresh token expired or was revoked (it lasts ~365 days).\n\nRun once locally to mint a new one:\n\`\`\`\ncd ~/Documents/GitHub/appspace-desk-booker\npython refresh_token.py\n\`\`\`\nApprove the Okta push. The script stores a fresh APPSPACE_REFRESH_TOKEN and everything is unattended again for another year."
             gh issue create \
-              --title "Appspace token mint failed — manual Okta re-auth required" \
-              --label "token-expired" \
-              --repo ${{ github.repository }} \
-              --body "$BODY"
+              --title "Appspace refresh token expired — yearly re-auth required" \
+              --label "token-expired" --repo ${{ github.repository }} --body "$BODY"
           fi
-          echo "::error::Token mint failed — cannot check in. See token-expired issue."
-          exit 1
-
-      - name: Close stale token-expired issue (mint succeeded)
-        if: steps.mint.outcome == 'success'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          EXISTING=$(gh issue list --label "token-expired" --state open \
-            --json number --repo ${{ github.repository }} -q '.[0].number' 2>/dev/null)
-          if [ -n "$EXISTING" ]; then
-            gh issue close "$EXISTING" --repo ${{ github.repository }} \
-              --comment "✅ Token mint succeeded — healed automatically. Closing."
-          fi
-
-      - name: Check in to desk
-        run: python book_desk.py --checkin
 
       - name: Summary
         if: always()
@@ -108,7 +77,5 @@ jobs:
           echo "## ✅ Desk Check-In Summary" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "- **Desk**: 08W-125-G (7 Hudson, 8th Floor)" >> $GITHUB_STEP_SUMMARY
-          echo "- **Scheduled**: 8:00 AM ET (waits until window, then mints token)" >> $GITHUB_STEP_SUMMARY
+          echo "- **Scheduled**: 8:00 AM ET (waits for the 9:15-9:45 window)" >> $GITHUB_STEP_SUMMARY
           echo "- **Actual run**: $(TZ='America/New_York' date '+%Y-%m-%d %H:%M:%S %Z')" >> $GITHUB_STEP_SUMMARY
-          echo "" >> $GITHUB_STEP_SUMMARY
-          echo "Check-in window: 9:15 AM - 9:45 AM ET (Appspace enforced)" >> $GITHUB_STEP_SUMMARY
