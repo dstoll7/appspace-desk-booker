@@ -1,8 +1,10 @@
-# Appspace Desk Auto-Booker 🏢
+# Appspace Desk Booker 🏢
 
-Automatically books desk **08W-125-G** at 7 Hudson, 7 days in advance, and checks
-in each morning — **fully unattended** via GitHub Actions. No browser, no daily
-logins, no laptop required.
+Books desk **08W-125-G** at 7 Hudson for the upcoming week in a single local run.
+
+> **Not unattended.** An earlier version of this project tried to run hands-off in
+> GitHub Actions for ~a year. That doesn't work — see [Why it can't be automated](#why-it-cant-be-automated).
+> Booking is now a quick **weekly local ritual**.
 
 ## Configuration
 
@@ -10,98 +12,65 @@ logins, no laptop required.
 |---------|-------|
 | Desk | 08W-125-G (8th floor, 7 Hudson) |
 | Time | 9:30 AM - 5:30 PM Eastern |
-| Booking Window | 7 days in advance |
+| Booking Window | 7 days in advance (Appspace hard limit) |
+| Days booked | Mon–Thu |
 
-## Automated Schedules
+## Usage — book the week
 
-| Workflow | Schedule | Purpose |
-|----------|----------|---------|
-| **Book Desk Daily** | 11:00 PM ET (Mon-Thu) | Books the desk 7 days out |
-| **Check In to Desk** | 8:00 AM ET (Mon-Thu) | Waits for the 9:15-9:45 AM window, then checks in |
-
-## How authentication works (the important part)
-
-Appspace session tokens are short-lived and can **only** be minted interactively
-through Disney's Okta SSO — there is no headless/automated browser path (Okta
-blocks it). So keeping a session token alive in the cloud is impossible.
-
-Instead, this project uses Appspace's **refresh token**:
-
-- A one-time local login (`refresh_token.py`) captures a **refresh token** that
-  is valid for **~365 days** and is **non-rotating**.
-- It's stored as the `APPSPACE_REFRESH_TOKEN` GitHub Secret.
-- Every workflow run mints a fresh short-lived session token from it with a
-  single plain-HTTP call (`POST /api/v3/authorization/token`,
-  `grantType: refreshToken`) — **no browser, no Okta, no interaction.**
-
-Result: the system runs hands-off for ~a year. You only re-authenticate when the
-refresh token finally expires or is revoked.
-
-## Setup
-
-### 1. Seed the refresh token (once, locally)
+Run this once a week (e.g. each Thursday/Friday for the coming week):
 
 ```
-python refresh_token.py
+python book_week.py
 ```
 
-Complete the Disney/Okta login in the window that opens. The script captures the
-refresh token, validates it, and stores it as the `APPSPACE_REFRESH_TOKEN`
-secret. That's it — booking and check-in now run automatically.
+It opens a browser for the Disney/Okta login (approve the push), then books every
+Mon–Thu inside the next 7 days that you don't already hold. Days still beyond the
+168-hour window are reported so you know to grab them on the next run.
 
-### 2. Secret
-
-| Secret | Description |
-|--------|-------------|
-| `APPSPACE_REFRESH_TOKEN` | Long-lived (~365-day) refresh token. Set by `refresh_token.py`. |
-
-(`GITHUB_TOKEN` is provided automatically and is used only to open a reminder
-issue if the refresh token ever expires.)
-
-### 3. Manual run
-
-Actions tab → select a workflow → **Run workflow**.
-
-## How It Works
-
-**Booking (11:00 PM ET, Mon-Thu)**
 ```
-1. Mint a fresh session token from the refresh token (plain HTTP)
-2. Skip if you already have the desk for the target date
-3. Lock the resource and create the reservation 7 days out
-4. On 409, verify YOU hold the desk (fail if someone else does)
+python book_week.py --list   # preview which days are in range (no login)
 ```
 
-**Check-in (8:00 AM ET, Mon-Thu)**
+## Why it can't be automated
+
+Appspace session tokens can **only** be minted interactively through Disney's Okta
+SSO — there is no headless/automated browser path (Okta blocks it, even with a warm
+profile). The intended workaround was the **refresh token**: capture it once, store
+it as a secret, and mint short-lived session tokens from it on every cloud run.
+
+**That fails because the refresh token's advertised lifetime is a lie.** The API
+returns `refreshTokenExpiresIn: 31536000` (365 days), but the token actually dies
+**~1 hour** after login — its real lifetime is tied to the parent Okta SSO session,
+not the advertised value (measured 2026-06-23/25). So any scheduled GitHub Actions
+run fires long after the token is dead and 401s.
+
+There is no grant-based keep-alive that beats this (tested — frequent refreshes do
+not reset the SSO session's clock). The only reliable path is a human Okta login
+followed by booking **within the hour** — which is exactly what `book_week.py` does,
+exploiting the 7-day window to cover a whole week per login.
+
+## Check-in ⚠️
+
+Check-in must happen in the **9:15–9:45 AM ET** window, and also needs a live token
+— so it has the **same ~1h problem** and can't be automated either. To check in,
+re-auth that morning and run:
+
 ```
-1. Sleep until the 9:15 AM window opens (absorbs GitHub's cron delay; no token needed)
-2. Mint a fresh session token from the refresh token
-3. Find today's reservation and check in
+python book_desk.py --checkin
 ```
 
-## Troubleshooting
-
-### `token-expired` issue appears / "AUTH FAILURE" in logs
-The refresh token expired (~yearly) or was revoked. Run `python refresh_token.py`
-locally once and approve the Okta push. The issue resolves on the next run.
-
-### Check-in failed
-- The job waits for the 9:15-9:45 AM window, tolerating cron delays up to ~75 min.
-- If GitHub delays the run past ~9:45 AM ET, the window is closed and Appspace
-  rejects the check-in — re-run the workflow manually that day.
-
-### Desk already booked (409)
-The script verifies whether *you* hold the reservation — success if yes, failure
-(someone else grabbed it) if no.
+(The `checkin-desk.yml` workflow is retained but will 401 unless the secret was
+re-seeded within the last hour.)
 
 ## Files
 
 | File | Purpose |
 |------|---------|
-| `book_desk.py` | Booking + check-in; mints session tokens from the refresh token |
-| `refresh_token.py` | One-time/yearly local tool to capture & store the refresh token |
-| `.github/workflows/book-desk.yml` | Nightly booking workflow |
-| `.github/workflows/checkin-desk.yml` | Morning check-in workflow |
+| `book_week.py` | **Main tool** — re-auth + book the whole upcoming week locally |
+| `book_desk.py` | Booking/check-in primitives; mints session tokens from a refresh token |
+| `refresh_token.py` | Capture a refresh token and store it as the `APPSPACE_REFRESH_TOKEN` secret (only needed for the cloud dispatch backup) |
+| `.github/workflows/book-desk.yml` | Manual-dispatch backup (no schedule) |
+| `.github/workflows/checkin-desk.yml` | Morning check-in (see caveat above) |
 
 ## API Endpoints Used
 

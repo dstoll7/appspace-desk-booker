@@ -1,16 +1,14 @@
-name: Book Desk Daily
+name: Book Desk (manual backup)
 
 on:
-  # Run at 11:00 PM ET, Monday-Thursday (to book 7 days out for Mon-Thu).
-  # Fully unattended: book_desk.py mints a fresh session token from the
-  # long-lived refresh token over plain HTTP — no browser, no Okta, no login.
-  # Two entries to handle DST:
-  #   EST (Nov-Mar): 11:00 PM ET = 04:00 UTC next day
-  #   EDT (Mar-Nov): 11:00 PM ET = 03:00 UTC next day
-  schedule:
-    - cron: '0 4 * * 2-5'   # 11:00 PM EST (runs Tue-Fri UTC = Mon-Thu ET night)
-    - cron: '0 3 * * 2-5'   # 11:00 PM EDT (runs Tue-Fri UTC = Mon-Thu ET night)
-
+  # NO schedule. Appspace refresh tokens die ~1h after an interactive Okta login
+  # (the advertised 365-day lifetime is NOT honored — see README), so any scheduled
+  # cloud run fires long after the token is dead and 401s. Booking is now a weekly
+  # LOCAL ritual: `python book_week.py` re-auths and books the whole upcoming week
+  # inside the token's short lifetime.
+  #
+  # Kept for manual dispatch only — works as a one-off backup if APPSPACE_REFRESH_TOKEN
+  # was re-seeded within the last ~hour.
   workflow_dispatch:
     inputs:
       days_ahead:

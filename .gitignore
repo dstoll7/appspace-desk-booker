@@ -29,3 +29,7 @@ Thumbs.db
 # Logs
 *.log
 
+
+# book_week local state
+.book_week_state.json
+logs/

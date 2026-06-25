@@ -193,14 +193,19 @@ def is_weekday(date):
     return date.weekday() < 4  # 0=Mon, 3=Thu
 
 
-def create_reservation(tokens):
-    """Create a desk reservation for N days from now."""
+def create_reservation(tokens, booking_date=None):
+    """Create a desk reservation.
+
+    Books N days from now by default; pass an explicit ``booking_date`` to book a
+    specific day (used by book_week.py to book the whole upcoming week at once).
+    """
     eastern = ZoneInfo(TIMEZONE)
     utc = ZoneInfo("UTC")
-    
+
     # Calculate booking datetime
-    booking_date = get_booking_date()
-    
+    if booking_date is None:
+        booking_date = get_booking_date()
+
     # Skip Fri-Sun
     if not is_weekday(booking_date):
         print(f"⏭️  Skipping {booking_date.strftime('%A')} - not a Mon-Thu booking day")
@@ -319,7 +324,7 @@ def create_reservation(tokens):
             # IMPORTANT: 409 doesn't mean YOU have the desk - someone else might!
             # Verify by checking our actual reservations
             print(f"\n🔍 Verifying if YOU have the reservation...")
-            if check_existing_reservations(tokens):
+            if check_existing_reservations(tokens, booking_date):
                 print(f"✅ Confirmed: You already have {DESK_NAME} reserved")
                 return True
             else:
@@ -339,13 +344,14 @@ def create_reservation(tokens):
         return False
 
 
-def check_existing_reservations(tokens):
+def check_existing_reservations(tokens, booking_date=None):
     """Check if there's already a reservation for the target date."""
     eastern = ZoneInfo(TIMEZONE)
     utc = ZoneInfo("UTC")
-    
-    booking_date = get_booking_date()
-    
+
+    if booking_date is None:
+        booking_date = get_booking_date()
+
     # Skip weekend check
     if not is_weekday(booking_date):
         return False

@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-"""Appspace Refresh-Token Seeder (run locally, ~once a year).
+"""Appspace Refresh-Token Seeder.
 
-Opens a browser to Appspace, you complete the Disney/Okta login once, and it
-captures the long-lived (~365-day) REFRESH token from the auth response. That
-token is stored as the APPSPACE_REFRESH_TOKEN GitHub Secret — after which the
-booking and check-in workflows run fully unattended (they mint short-lived
-session tokens from it over plain HTTP, no browser needed).
+Opens a browser to Appspace, you complete the Disney/Okta login, and it captures
+the REFRESH token from the auth response and stores it as the
+APPSPACE_REFRESH_TOKEN GitHub Secret.
 
-You only need to re-run this when the refresh token expires (~yearly) or is
-revoked — signalled by a "token-expired" GitHub Issue.
+⚠️ The captured token dies ~1 HOUR after login (the API's `refreshTokenExpiresIn:
+31536000` / 365-day claim is NOT honored — see README). So this only enables the
+cloud `book-desk.yml` dispatch as a backup *within the hour*. For normal weekly
+booking, use `book_week.py`, which re-auths and books the whole week locally in
+one shot.
 
 Usage:
     python refresh_token.py            # visible browser (default)
@@ -141,7 +142,8 @@ def main():
     if not update_github_secret("APPSPACE_REFRESH_TOKEN", refresh_token):
         sys.exit(1)
     print("  ✓ APPSPACE_REFRESH_TOKEN updated")
-    print("\nDone! Booking and check-in now run unattended for ~365 days.")
+    print("\n⚠️  This token dies in ~1 hour. Dispatch book-desk.yml now if you need it,"
+          "\n    or just use `python book_week.py` to book locally.")
 
 
 if __name__ == "__main__":
