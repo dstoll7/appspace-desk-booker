@@ -20,16 +20,27 @@
     <key>Label</key>
     <string>com.dstoll.appspace-book-week</string>
 
+    <!--
+      Runs the wrapper (run_book_week.sh), NOT book_week.py directly. The wrapper
+      waits for network after wake and fires a macOS notification on failure so a
+      silent failure can't cost a whole week again.
+    -->
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/daniel.stoll/GitHub/appspace-desk-booker/.venv/bin/python</string>
-        <string>/Users/daniel.stoll/GitHub/appspace-desk-booker/book_week.py</string>
+        <string>/bin/bash</string>
+        <string>/Users/daniel.stoll/GitHub/appspace-desk-booker/run_book_week.sh</string>
     </array>
 
     <key>WorkingDirectory</key>
     <string>/Users/daniel.stoll/GitHub/appspace-desk-booker</string>
 
-    <!-- Fire at 10:00 AM local on Thu(4), Fri(5), Sat(6), Sun(0), Mon(1). -->
+    <!--
+      Fire twice a day (10:00 and 14:00) on Thu(4), Fri(5), Sat(6), Sun(0),
+      Mon(1). The afternoon slot is an automatic retry: if the 10:00 run failed
+      (no network / push not approved), 14:00 gets a second shot the same day.
+      The idempotency guard in book_week.py keeps the afternoon run silent once
+      the week is already booked.
+    -->
     <key>StartCalendarInterval</key>
     <array>
         <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
@@ -37,6 +48,11 @@
         <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
         <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
         <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>10</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>6</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>0</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Weekday</key><integer>1</integer><key>Hour</key><integer>14</integer><key>Minute</key><integer>0</integer></dict>
     </array>
 
     <!-- Do NOT RunAtLoad: we don't want a browser at every login, only on schedule/wake. -->
