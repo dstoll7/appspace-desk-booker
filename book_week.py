@@ -41,6 +41,14 @@ from refresh_token import capture_refresh_token, mint_session_token
 # there's nothing new to do. Lives next to the script; gitignored.
 STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".book_week_state.json")
 
+# Exit code meaning "the browser opened but the Okta login wasn't completed in
+# time" — i.e. you haven't tapped the push yet. This is the EXPECTED outcome on
+# a morning you're not ready to approve, NOT a real failure: the rolling 7-day
+# window surfaces a new bookable weekday almost every workday, so a later run
+# (or you, when ready) will book it. The wrapper treats this code as benign and
+# stays silent, reserving the "FAILED" notification for genuine errors.
+EXIT_NEEDS_APPROVAL = 3
+
 
 def load_booked_dates(today):
     """Return the set of YYYY-MM-DD strings we've already booked (today onward)."""
@@ -119,8 +127,9 @@ def main():
     print("\n" + "=" * 60)
     refresh_token = capture_refresh_token()
     if not refresh_token:
-        print("\nERROR: Could not capture a refresh token. Did the dashboard load?")
-        sys.exit(1)
+        print("\nOkta login not completed in time — no desk booked this run.")
+        print("Not an error: run it again (or a later scheduled run will) and approve the push.")
+        sys.exit(EXIT_NEEDS_APPROVAL)
     print(f"✓ Captured refresh token: {refresh_token[:8]}...{refresh_token[-4:]}")
 
     session_token = mint_session_token(refresh_token)
