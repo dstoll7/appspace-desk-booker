@@ -34,7 +34,11 @@ from datetime import datetime, timedelta
 from zoneinfo import ZoneInfo
 
 import book_desk
-from refresh_token import capture_refresh_token, mint_session_token
+from refresh_token import (
+    TransientBrowserError,
+    capture_refresh_token,
+    mint_session_token,
+)
 
 # Records dates we've already successfully booked, so the job can run on several
 # mornings (resilience if the laptop is closed) without popping a browser when
@@ -48,6 +52,15 @@ STATE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".book_wee
 # (or you, when ready) will book it. The wrapper treats this code as benign and
 # stays silent, reserving the "FAILED" notification for genuine errors.
 EXIT_NEEDS_APPROVAL = 3
+
+# Exit code for a transient browser/network failure — launchd runs this on wake,
+# when Wi-Fi is often still re-negotiating, so the browser can fail to launch or a
+# navigation can die with ERR_NETWORK_CHANGED even though the wrapper's preflight
+# curl succeeded moments earlier. Retried internally first (see
+# refresh_token.capture_refresh_token); if it still fails it's infrastructure
+# noise, not something to alert on, so the wrapper stays silent too and a later
+# run picks it up.
+EXIT_TRANSIENT = 4
 
 
 def load_booked_dates(today):
@@ -125,7 +138,13 @@ def main():
 
     # 1. Re-auth (browser) and mint a session token.
     print("\n" + "=" * 60)
-    refresh_token = capture_refresh_token()
+    try:
+        refresh_token = capture_refresh_token()
+    except TransientBrowserError as e:
+        print(f"\nBrowser/network problem (transient): {e}")
+        print("Not an error worth acting on — the network was likely still coming up "
+              "after wake. A later scheduled run will retry.")
+        sys.exit(EXIT_TRANSIENT)
     if not refresh_token:
         print("\nOkta login not completed in time — no desk booked this run.")
         print("Not an error: run it again (or a later scheduled run will) and approve the push.")

@@ -24,6 +24,39 @@ import sys
 import urllib.request
 
 from playwright.sync_api import sync_playwright, TimeoutError as PlaywrightTimeout
+from playwright.sync_api import Error as PlaywrightError
+
+
+class TransientBrowserError(Exception):
+    """Browser/network failure that is infrastructure noise, not a real problem.
+
+    launchd fires the booker on wake, when Wi-Fi is often still re-negotiating —
+    so the browser can fail to launch, or a navigation can die mid-flight with
+    ERR_NETWORK_CHANGED / ERR_INTERNET_DISCONNECTED, even though a preflight
+    curl succeeded moments earlier. These used to escape as uncaught Playwright
+    exceptions (exit 1), which looked identical to a genuine failure and fired a
+    "FAILED" notification every morning. They're retried, then reported as
+    transient so the caller can stay silent.
+    """
+
+
+# Navigation errors worth retrying: the network changed underneath us rather
+# than the site being broken.
+_TRANSIENT_MARKERS = (
+    "ERR_NETWORK_CHANGED",
+    "ERR_INTERNET_DISCONNECTED",
+    "ERR_NAME_NOT_RESOLVED",
+    "ERR_CONNECTION_RESET",
+    "ERR_CONNECTION_CLOSED",
+    "ERR_CONNECTION_TIMED_OUT",
+    "ERR_ADDRESS_UNREACHABLE",
+    "ERR_NETWORK_IO_SUSPENDED",
+)
+
+
+def _is_transient(exc: Exception) -> bool:
+    return any(marker in str(exc) for marker in _TRANSIENT_MARKERS)
+
 
 APPSPACE_URL = "https://disney.cloud.appspace.com"
 BASE_URL = f"{APPSPACE_URL}/api/v3"
@@ -68,44 +101,83 @@ def update_github_secret(name: str, value: str) -> bool:
 
 
 def capture_refresh_token() -> str | None:
-    """Open a visible browser, complete SSO, capture the refresh token."""
+    """Open a visible browser, complete SSO, capture the refresh token.
+
+    Returns the token, or None if the Okta login wasn't completed in time.
+    Raises TransientBrowserError if the browser/network failed in a way that's
+    worth retrying later (common when launchd fires this on wake).
+    """
     print("Launching browser (visible)...")
     captured = {}
 
-    with sync_playwright() as p:
-        browser = p.chromium.launch(headless=False)
-        context = browser.new_context(viewport={"width": 1280, "height": 800})
-        page = context.new_page()
+    try:
+        with sync_playwright() as p:
+            try:
+                browser = p.chromium.launch(headless=False)
+            except (PlaywrightTimeout, PlaywrightError) as e:
+                # A launch timeout on wake means the machine was too busy or the
+                # network stack wasn't ready — retryable, not a real failure.
+                raise TransientBrowserError(f"browser failed to launch: {e}") from e
 
-        def handle_response(response):
-            if "/api/v3/authorization/token" in response.url and response.status == 200:
+            try:
+                context = browser.new_context(viewport={"width": 1280, "height": 800})
+                page = context.new_page()
+
+                def handle_response(response):
+                    if "/api/v3/authorization/token" in response.url and response.status == 200:
+                        try:
+                            body = response.json()
+                            if body.get("refreshToken"):
+                                captured["refresh_token"] = body["refreshToken"]
+                        except Exception:
+                            pass
+
+                page.on("response", handle_response)
+
+                # Retry the initial navigation: on wake, Wi-Fi often re-negotiates
+                # mid-flight and kills it with ERR_NETWORK_CHANGED even though a
+                # preflight curl just succeeded.
+                print(f"Navigating to {APPSPACE_URL}...")
+                attempts = 3
+                for attempt in range(1, attempts + 1):
+                    try:
+                        page.goto(APPSPACE_URL, wait_until="domcontentloaded")
+                        break
+                    except (PlaywrightTimeout, PlaywrightError) as e:
+                        if attempt == attempts or not _is_transient(e):
+                            raise TransientBrowserError(
+                                f"navigation to {APPSPACE_URL} failed after "
+                                f"{attempt} attempt(s): {e}"
+                            ) from e
+                        backoff = 10 * attempt
+                        print(f"  network changed mid-navigation (attempt {attempt}/{attempts}); "
+                              f"retrying in {backoff}s...")
+                        page.wait_for_timeout(backoff * 1000)
+
+                print("\n" + "=" * 60)
+                print("Complete the Disney/Okta login in the browser window.")
+                print("=" * 60 + "\n")
+
                 try:
-                    body = response.json()
-                    if body.get("refreshToken"):
-                        captured["refresh_token"] = body["refreshToken"]
-                except Exception:
+                    page.wait_for_url("**/disney.cloud.appspace.com/console/**", timeout=180_000)
+                except PlaywrightTimeout:
                     pass
 
-        page.on("response", handle_response)
-
-        print(f"Navigating to {APPSPACE_URL}...")
-        page.goto(APPSPACE_URL, wait_until="domcontentloaded")
-        print("\n" + "=" * 60)
-        print("Complete the Disney/Okta login in the browser window.")
-        print("=" * 60 + "\n")
-
-        try:
-            page.wait_for_url("**/disney.cloud.appspace.com/console/**", timeout=180_000)
-        except PlaywrightTimeout:
-            pass
-
-        # Let the post-login auth call settle so we capture the refresh token
-        try:
-            page.wait_for_timeout(6000)
-        except Exception:
-            pass
-
-        browser.close()
+                # Let the post-login auth call settle so we capture the refresh token
+                try:
+                    page.wait_for_timeout(6000)
+                except Exception:
+                    pass
+            finally:
+                try:
+                    browser.close()
+                except Exception:
+                    pass
+    except TransientBrowserError:
+        raise
+    except (PlaywrightTimeout, PlaywrightError) as e:
+        # Anything else Playwright threw while the network was unsettled.
+        raise TransientBrowserError(f"browser session failed: {e}") from e
 
     return captured.get("refresh_token")
 

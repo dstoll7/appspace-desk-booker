@@ -37,6 +37,9 @@ check "exit 0 (success) => silent" 0
 NOTIFY_CALLS=0; handle_exit_status "$EXIT_NEEDS_APPROVAL" || true
 check "exit $EXIT_NEEDS_APPROVAL (Okta not completed) => silent" 0
 
+NOTIFY_CALLS=0; handle_exit_status "$EXIT_TRANSIENT" || true
+check "exit $EXIT_TRANSIENT (transient network/browser) => silent" 0
+
 NOTIFY_CALLS=0; handle_exit_status 1 || true
 check "exit 1 (genuine error) => notify once" 1
 

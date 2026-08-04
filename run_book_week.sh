@@ -30,6 +30,11 @@ HOST="https://disney.cloud.appspace.com"
 # Okta login wasn't completed in time" — benign, no notification.
 EXIT_NEEDS_APPROVAL=3
 
+# Keep in sync with book_week.py's EXIT_TRANSIENT: the browser or its navigation
+# died because the network was still settling after wake (ERR_NETWORK_CHANGED,
+# launch timeout). Already retried inside book_week.py — benign, no notification.
+EXIT_TRANSIENT=4
+
 notify() {
     # $1 = title, $2 = message
     /usr/bin/osascript -e "display notification \"$2\" with title \"$1\" sound name \"Basso\"" 2>/dev/null || true
@@ -57,6 +62,10 @@ handle_exit_status() {
     fi
     if [ "$status" -eq "$EXIT_NEEDS_APPROVAL" ]; then
         echo "$(date): Okta login not completed in time — nothing booked, no action needed. A later run (or you) will book it."
+        return 0
+    fi
+    if [ "$status" -eq "$EXIT_TRANSIENT" ]; then
+        echo "$(date): transient browser/network failure (network still settling after wake) — nothing booked. A later run will retry."
         return 0
     fi
     notify "Desk booking FAILED" "book_week.py exited $status — a real error (not a missed Okta tap). Run it manually and check ~/Library/Logs/appspace-book-week.log."

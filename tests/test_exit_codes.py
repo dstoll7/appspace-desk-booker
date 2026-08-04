@@ -62,7 +62,30 @@ def test_mint_failure_exits_one():
         book_week.mint_session_token = orig_mint
 
 
+def test_transient_browser_error_exits_transient():
+    """A flaky-network browser failure (ERR_NETWORK_CHANGED on wake, browser
+    launch timeout) is infrastructure noise, not something to alert on. It must
+    exit EXIT_TRANSIENT so the wrapper stays silent and a later run retries."""
+    orig = book_week.capture_refresh_token
+
+    def boom():
+        raise book_week.TransientBrowserError(
+            "Page.goto: net::ERR_NETWORK_CHANGED at https://disney.cloud.appspace.com/"
+        )
+
+    book_week.capture_refresh_token = boom
+    try:
+        code = run_main(["book_week.py", "--force"])
+        assert code == book_week.EXIT_TRANSIENT, (
+            f"expected {book_week.EXIT_TRANSIENT} (transient), got {code}"
+        )
+        print(f"PASS: transient browser error -> exit {book_week.EXIT_TRANSIENT}")
+    finally:
+        book_week.capture_refresh_token = orig
+
+
 if __name__ == "__main__":
     test_no_token_exits_needs_approval()
     test_mint_failure_exits_one()
+    test_transient_browser_error_exits_transient()
     print("ALL PASS")
